@@ -198,7 +198,7 @@ When uploading to UnknownCyber, each executable is tagged with:
 | Field | Format | Example |
 |-------|--------|---------|
 | **Filename** | Path below `node_modules` | `@esbuild/win32-x64/esbuild.exe` |
-| **Package Tag** | `SW_<package>@<version>` | `SW_@esbuild/win32-x64@0.20.2` |
+| **Package Tag** | `SW_<package>_<version>` | `SW_@esbuild/win32-x64_0.20.2` |
 | **Repo Tag** | `REPO_<owner>/<repo>` | `REPO_my-org/my-app` |
 
 The repository tag helps identify which project the binary came from, useful when the same package version appears in multiple repositories.
