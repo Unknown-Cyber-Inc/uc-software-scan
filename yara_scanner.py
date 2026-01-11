@@ -135,14 +135,14 @@ def scan_files_from_json(rules: yara.Rules, json_path: str, timeout: int = 60) -
     }
     
     packages = scan_results.get('packages', [])
-    total_files = sum(len(pkg.get('executables', [])) for pkg in packages)
+    total_files = sum(len(pkg.get('files', [])) for pkg in packages)
     
     print(f"\nScanning {total_files} files with YARA...", file=sys.stderr)
     
     scanned = 0
     for package in packages:
-        for executable in package.get('executables', []):
-            file_path = executable.get('path', '')
+        for executable in package.get('files', []):
+            file_path = executable.get('file', '')
             
             # Construct full path
             if file_path.startswith('node_modules/'):
@@ -168,9 +168,10 @@ def scan_files_from_json(rules: yara.Rules, json_path: str, timeout: int = 60) -
                 
                 result = {
                     'file': file_path,
-                    'package': package.get('name', 'unknown'),
+                    'package': package.get('package', 'unknown'),
                     'version': package.get('version', 'unknown'),
                     'sha256': executable.get('sha256', ''),
+                    'type': executable.get('type', ''),
                     'matches': matches
                 }
                 yara_results['results'].append(result)

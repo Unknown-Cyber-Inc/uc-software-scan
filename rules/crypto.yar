@@ -55,23 +55,6 @@ rule CryptoMiner_Coinhive {
         any of them
 }
 
-rule CryptoMiner_Wallet_Address {
-    meta:
-        description = "Detects cryptocurrency wallet addresses"
-        severity = "medium"
-        category = "cryptominer"
-    strings:
-        // Monero addresses start with 4
-        $xmr_addr = /4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}/ ascii
-        // Bitcoin addresses
-        $btc_addr1 = /[13][a-km-zA-HJ-NP-Z1-9]{25,34}/ ascii
-        $btc_addr2 = /bc1[a-zA-HJ-NP-Z0-9]{39,59}/ ascii
-        // Ethereum addresses
-        $eth_addr = /0x[a-fA-F0-9]{40}/ ascii
-    condition:
-        any of them
-}
-
 rule CryptoMiner_CPU_GPU {
     meta:
         description = "Detects mining-related CPU/GPU usage patterns"
