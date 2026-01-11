@@ -30,6 +30,7 @@ This tool helps you:
 - ☁️ **UnknownCyber Integration**: Upload binaries for malware analysis
 - 🔒 **Smart Deduplication**: Skips files already in UnknownCyber to save time and bandwidth
 - ⚠️ **Threat Detection**: Fetches and displays reputation data for existing files
+- 🧬 **YARA Scanning**: Local pattern matching for malware and suspicious patterns
 - 📊 **Detailed Reports**: JSON output with full scan results and threat assessments
 - 🚀 **GitHub Action**: Easy CI/CD integration
 
@@ -92,6 +93,9 @@ node scanner.js --upload --api-key YOUR_API_KEY
 | `api-url` | UnknownCyber API URL | No | `https://api.unknowncyber.com` |
 | `api-key` | UnknownCyber API key | No | `''` |
 | `repo` | Repository name to tag uploads with | No | `${{ github.repository }}` |
+| `yara-scan` | Enable YARA scanning | No | `false` |
+| `yara-rules` | Path to additional YARA rules | No | `''` |
+| `yara-include` | File patterns for YARA (e.g., `*.js,*.html`) | No | `''` |
 
 ### Outputs
 
@@ -104,6 +108,8 @@ node scanner.js --upload --api-key YOUR_API_KEY
 | `upload-failed` | Number of failed uploads |
 | `upload-skipped` | Number of files skipped (already exist in UC) |
 | `threats-found` | Number of files with HIGH or MEDIUM threat level |
+| `yara-matches` | Number of files with YARA rule matches |
+| `yara-high-severity` | Number of high/critical severity YARA matches |
 
 ### Examples
 
@@ -336,6 +342,18 @@ Digital signature validity for Windows PE files:
 | Valid signature | NONE | Verified publisher identity |
 | Unknown | UNKNOWN | Signature data unavailable |
 
+### 4. YARA Pattern Matching
+Local scanning using YARA rules to detect malware patterns:
+
+| Severity (from rule metadata) | Level | Interpretation |
+|------------------------------|-------|----------------|
+| `critical` | HIGH | Known malware signatures, active threats |
+| `high` | HIGH | Strong indicators of malicious behavior |
+| `medium` | MEDIUM | Suspicious patterns worth investigating |
+| `low` | LOW | Minor concerns, informational |
+
+See [YARA Scanning](#yara-scanning) for usage examples and pipeline blocking.
+
 ## GitHub Actions Annotations
 
 When running as a GitHub Action, the scanner automatically emits annotations based on threat analysis:
@@ -365,6 +383,124 @@ When files already exist in UnknownCyber, the scanner automatically syncs tags:
 - Checks existing tags on each file
 - Adds missing `SW_<package>_<version>` and `REPO_<repo>` tags
 - Ensures consistent tagging across repositories
+
+## YARA Scanning
+
+The scanner includes optional YARA scanning to detect malware patterns and suspicious code in binaries and source files.
+
+### Scan Binaries Only
+
+```yaml
+- name: Scan binaries with YARA
+  uses: Unknown-Cyber-Inc/npm-binary-scanner@v1
+  with:
+    yara-scan: 'true'
+```
+
+### Scan JavaScript Files
+
+Detect obfuscated malicious code in JS files (e.g., supply chain attacks):
+
+```yaml
+- name: Scan JS files with YARA
+  uses: Unknown-Cyber-Inc/npm-binary-scanner@v1
+  with:
+    yara-scan: 'true'
+    yara-include: '*.js'
+```
+
+### Scan Multiple File Types
+
+```yaml
+- name: Scan JS, HTML, and MJS files
+  uses: Unknown-Cyber-Inc/npm-binary-scanner@v1
+  with:
+    yara-scan: 'true'
+    yara-include: '*.js,*.html,*.mjs'
+```
+
+### Add Custom Rules
+
+```yaml
+- name: Scan with custom YARA rules
+  uses: Unknown-Cyber-Inc/npm-binary-scanner@v1
+  with:
+    yara-scan: 'true'
+    yara-rules: './my-rules'  # Path to your .yar files
+```
+
+### Bundled Rules
+
+The scanner includes these YARA rule categories:
+
+| Rule File | Description |
+|-----------|-------------|
+| `malware.yar` | Backdoors, info stealers, droppers, webshells, npm-specific malware |
+| `suspicious.yar` | PowerShell cradles, Base64 execution, process injection, anti-debug |
+| `crypto.yar` | Mining pools, XMRig, Coinhive, CPU/GPU miner patterns |
+| `shai_hulud.yar` | Obfuscated JavaScript patterns (npm supply chain attacks) |
+
+### YARA CLI Usage
+
+```bash
+# Scan binaries from results.json
+python yara_scanner.py --input results.json
+
+# Scan JavaScript files
+python yara_scanner.py --dir ./node_modules --include "*.js"
+
+# Scan multiple file types
+python yara_scanner.py --dir ./node_modules --include "*.js" --include "*.html" --include "*.mjs"
+
+# Scan all files in a directory
+python yara_scanner.py --dir ./node_modules
+
+# Use only custom rules (skip bundled)
+python yara_scanner.py --dir ./node_modules --include "*.js" --rules ./my-rules --no-bundled-rules
+
+# Output to file with GitHub annotations
+python yara_scanner.py --input results.json --output yara.json --github-annotations
+```
+
+### YARA Results & Outputs
+
+YARA matches are reported with severity levels from rule metadata:
+
+| Severity | Description | Annotation |
+|----------|-------------|------------|
+| **critical** | Known malware, active threats | 🔴 `::error::` |
+| **high** | Strong indicators of malicious behavior | 🔴 `::error::` |
+| **medium** | Suspicious patterns worth investigating | 🟡 `::warning::` |
+| **low** | Minor concerns, informational | 🔵 `::notice::` |
+
+**Outputs:**
+- `yara-matches`: Total files with any YARA match
+- `yara-high-severity`: Files matching critical/high severity rules
+
+### Block Pipeline on YARA Matches
+
+```yaml
+- name: Scan with YARA
+  uses: Unknown-Cyber-Inc/npm-binary-scanner@v1
+  id: scan
+  with:
+    yara-scan: 'true'
+    yara-include: '*.js'
+
+# Option 1: Fail only on high-severity matches (malware signatures)
+- name: Fail on malware detection
+  if: steps.scan.outputs.yara-high-severity > 0
+  run: |
+    echo "::error::YARA detected ${{ steps.scan.outputs.yara-high-severity }} high-severity matches!"
+    exit 1
+
+# Option 2: Fail on ANY YARA match (stricter)
+- name: Fail on any YARA match
+  if: steps.scan.outputs.yara-matches > 0
+  run: |
+    echo "::error::YARA detected matches in ${{ steps.scan.outputs.yara-matches }} files!"
+    exit 1
+```
 
 ## Detected Binary Types
 
@@ -458,7 +594,8 @@ Many popular npm packages include native binaries:
 
 - Node.js 18+ (for GitHub Action)
 - Node.js 12+ (for CLI)
-- No external dependencies
+- Python 3.8+ with `yara-python` (for YARA scanning, optional)
+- No other external dependencies
 
 ## License
 
