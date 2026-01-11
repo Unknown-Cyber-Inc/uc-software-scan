@@ -290,6 +290,36 @@ Threat assessment is based on three factors:
 2. **Genomic Similarity**: Code similarity to known malware
 3. **Code Signing**: Digital signature validity
 
+## GitHub Actions Annotations
+
+When running as a GitHub Action, the scanner automatically emits annotations based on threat analysis:
+
+| Threat Level | Annotation Type | Visibility |
+|--------------|-----------------|------------|
+| **HIGH** | `::error::` | 🔴 Red error in checks, blocks PR merge (if required) |
+| **MEDIUM** | `::warning::` | 🟡 Yellow warning in checks |
+| **CAUTION** | `::notice::` | 🔵 Blue notice in checks |
+
+Each annotation includes details about which reputation factor triggered it:
+
+```
+::error title=High Threat - AV::@malicious/pkg/evil.exe - AV Detection: 45/70 - malicious
+::warning title=Medium Threat - Similarity::suspicious.dll - Suspicious similarity (15 similar files)
+::notice title=Caution - Signature::unsigned.exe - Unsigned binary
+```
+
+These annotations appear in:
+- **PR Checks** - Visible on pull request pages
+- **Job Logs** - Inline with scanner output
+- **Annotations Tab** - Summary view in Actions
+
+### Automatic Tag Syncing
+
+When files already exist in UnknownCyber, the scanner automatically syncs tags:
+- Checks existing tags on each file
+- Adds missing `SW_<package>_<version>` and `REPO_<repo>` tags
+- Ensures consistent tagging across repositories
+
 ## Detected Binary Types
 
 | Platform | Extensions/Types |

@@ -144,6 +144,80 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * Make an HTTP POST request with form data
+ * @param {string} baseUrl - API base URL
+ * @param {string} apiKey - API key for authentication
+ * @param {string} endpoint - API endpoint
+ * @param {object} options - Request options
+ * @returns {Promise<any>}
+ */
+async function makeFormRequest(baseUrl, apiKey, endpoint, options = {}) {
+  const { fields = {}, timeout = DEFAULT_TIMEOUT } = options;
+
+  // Build URL with API key
+  const searchParams = new URLSearchParams();
+  searchParams.append('key', apiKey);
+
+  const urlString = `${baseUrl.replace(/\/$/, '')}${endpoint}?${searchParams.toString()}`;
+  const url = new URL(urlString);
+
+  // Build multipart form data
+  const boundary = '----FormBoundary' + Math.random().toString(36).substring(2);
+  let body = '';
+  
+  for (const [name, value] of Object.entries(fields)) {
+    body += `--${boundary}\r\n`;
+    body += `Content-Disposition: form-data; name="${name}"\r\n\r\n`;
+    body += `${value}\r\n`;
+  }
+  body += `--${boundary}--\r\n`;
+
+  const requestOptions = {
+    hostname: url.hostname,
+    port: url.port || (url.protocol === 'https:' ? 443 : 80),
+    path: url.pathname + url.search,
+    method: 'POST',
+    headers: {
+      'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      'Content-Length': Buffer.byteLength(body),
+    },
+    timeout,
+  };
+
+  return new Promise((resolve, reject) => {
+    const protocol = url.protocol === 'https:' ? https : http;
+
+    const req = protocol.request(requestOptions, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.resource !== undefined) resolve(parsed.resource);
+            else if (parsed.resources !== undefined) resolve(parsed.resources);
+            else resolve(parsed);
+          } catch {
+            resolve(data);
+          }
+        } else {
+          reject(new Error(`HTTP ${res.statusCode}: ${data.substring(0, 200)}`));
+        }
+      });
+    });
+
+    req.on('error', reject);
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('Request timeout'));
+    });
+
+    req.write(body);
+    req.end();
+  });
+}
+
 // ============================================================================
 // Reputation Client
 // ============================================================================
@@ -166,6 +240,12 @@ function createReputationClient(config) {
   const requestOptions = { timeout, retries, retryDelay };
 
   return {
+    // Expose config for external functions
+    _apiUrl: apiUrl,
+    _apiKey: apiKey,
+    _timeout: timeout,
+    _retries: retries,
+    _retryDelay: retryDelay,
     /**
      * Get basic file information including detection counts
      * @param {string} hash - File hash
@@ -586,6 +666,59 @@ async function fileExists(client, hash) {
 }
 
 /**
+ * Get tags for a file
+ * @param {object} client - Reputation client  
+ * @param {string} hash - File hash
+ * @returns {Promise<string[]>} - Array of tag names
+ */
+async function getFileTags(client, hash) {
+  const result = await makeRequest(client._apiUrl, client._apiKey, `/v2/files/${hash}/tags/`, {
+    timeout: client._timeout,
+    retries: client._retries,
+    retryDelay: client._retryDelay,
+  });
+  
+  if (!result) return [];
+  
+  // API returns array of tag objects with 'name' property
+  if (Array.isArray(result)) {
+    return result.map(t => t.name || t).filter(Boolean);
+  }
+  
+  return [];
+}
+
+/**
+ * Add tags to a file
+ * @param {object} client - Reputation client
+ * @param {string} hash - File hash
+ * @param {string[]} tags - Array of tag names to add
+ * @returns {Promise<{added: string[], existing: string[], failed: string[]}>}
+ */
+async function addFileTags(client, hash, tags) {
+  const results = { added: [], existing: [], failed: [] };
+  
+  for (const tag of tags) {
+    try {
+      await makeFormRequest(client._apiUrl, client._apiKey, `/v2/files/${hash}/tags/`, {
+        timeout: client._timeout,
+        fields: { name: tag }
+      });
+      results.added.push(tag);
+    } catch (err) {
+      // Check if tag already exists (might return 409 or similar)
+      if (err.message && err.message.includes('409')) {
+        results.existing.push(tag);
+      } else {
+        results.failed.push(tag);
+      }
+    }
+  }
+  
+  return results;
+}
+
+/**
  * Check multiple file hashes for existence (for batch deduplication)
  * @param {object} client - Reputation client
  * @param {string[]} hashes - Array of file hashes
@@ -681,6 +814,10 @@ module.exports = {
   // File existence checks (for deduplication)
   fileExists,
   checkFileExistence,
+
+  // Tag management
+  getFileTags,
+  addFileTags,
 
   // Utilities
   isValidHash,

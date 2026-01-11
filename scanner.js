@@ -15,7 +15,7 @@ const http = require('http');
 const { URL } = require('url');
 
 // File reputation module for checking existing files
-const { createReputationClient, checkFileExistence, getFileReputations } = require('./file-reputation');
+const { createReputationClient, checkFileExistence, getFileReputations, getFileTags, addFileTags } = require('./file-reputation');
 
 // Binary file extensions to look for
 const BINARY_EXTENSIONS = new Set([
@@ -520,6 +520,97 @@ async function getReputationsForExisting(existingFiles, apiUrl, apiKey) {
 }
 
 /**
+ * Sync tags for existing files - add missing tags
+ * @param {object[]} existingFiles - Files that exist in UC
+ * @param {string} apiUrl - API base URL
+ * @param {string} apiKey - API key
+ * @param {string} repo - Repository name (optional)
+ * @returns {Promise<object>} - { synced: [], alreadyTagged: [], failed: [] }
+ */
+async function syncTagsForExisting(existingFiles, apiUrl, apiKey, repo) {
+  if (existingFiles.length === 0) return { synced: [], alreadyTagged: [], failed: [] };
+  
+  console.log('\n' + '-'.repeat(60));
+  console.log('Syncing tags for existing files...');
+  
+  const results = { synced: [], alreadyTagged: [], failed: [] };
+  
+  try {
+    const client = createReputationClient({ apiUrl, apiKey });
+    
+    for (let i = 0; i < existingFiles.length; i++) {
+      const file = existingFiles[i];
+      process.stdout.write(`\r  [${i + 1}/${existingFiles.length}] Checking tags for ${file.file.substring(0, 40)}...`);
+      
+      // Build expected tags
+      const expectedTags = [];
+      expectedTags.push(`SW_${file.package}@${file.version}`.replace(/\s+/g, '_'));
+      if (repo) {
+        expectedTags.push(`REPO_${repo}`.replace(/\s+/g, '_'));
+      }
+      
+      try {
+        // Get current tags
+        const currentTags = await getFileTags(client, file.sha256);
+        const currentTagSet = new Set(currentTags);
+        
+        // Find missing tags
+        const missingTags = expectedTags.filter(t => !currentTagSet.has(t));
+        
+        if (missingTags.length === 0) {
+          results.alreadyTagged.push({
+            file: file.file,
+            sha256: file.sha256,
+            tags: expectedTags
+          });
+        } else {
+          // Add missing tags
+          const addResult = await addFileTags(client, file.sha256, missingTags);
+          
+          if (addResult.added.length > 0 || addResult.existing.length > 0) {
+            results.synced.push({
+              file: file.file,
+              sha256: file.sha256,
+              addedTags: addResult.added,
+              existingTags: addResult.existing
+            });
+          }
+          
+          if (addResult.failed.length > 0) {
+            results.failed.push({
+              file: file.file,
+              sha256: file.sha256,
+              failedTags: addResult.failed
+            });
+          }
+        }
+      } catch (err) {
+        results.failed.push({
+          file: file.file,
+          sha256: file.sha256,
+          error: err.message
+        });
+      }
+    }
+    
+    process.stdout.write('\r' + ' '.repeat(80) + '\r');
+    
+    // Summary
+    console.log('  Tag sync summary:');
+    console.log(`    Already tagged: ${results.alreadyTagged.length}`);
+    console.log(`    Tags added: ${results.synced.length}`);
+    if (results.failed.length > 0) {
+      console.log(`    \x1b[31mFailed: ${results.failed.length}\x1b[0m`);
+    }
+    
+    return results;
+  } catch (err) {
+    console.log(`\n  Warning: Could not sync tags: ${err.message}`);
+    return results;
+  }
+}
+
+/**
  * Upload all found binaries
  */
 async function uploadBinaries(results, apiUrl, apiKey, repo, options = {}) {
@@ -533,10 +624,17 @@ async function uploadBinaries(results, apiUrl, apiKey, repo, options = {}) {
   let existingReputations = [];
   
   // Check for existing files if enabled
+  let tagSyncResults = { synced: [], alreadyTagged: [], failed: [] };
+  
   if (skipExisting) {
     const checkResult = await checkExistingFiles(results, apiUrl, apiKey);
     toUpload = checkResult.toUpload;
     existingFiles = checkResult.existing;
+    
+    // Sync tags for existing files (add missing tags)
+    if (existingFiles.length > 0) {
+      tagSyncResults = await syncTagsForExisting(existingFiles, apiUrl, apiKey, repo);
+    }
     
     // Get reputations for existing files if enabled
     if (getReputations && existingFiles.length > 0) {
@@ -561,6 +659,7 @@ async function uploadBinaries(results, apiUrl, apiKey, repo, options = {}) {
       sha256: f.sha256,
       reason: 'already_exists'
     })),
+    tagSync: tagSyncResults,
     reputations: existingReputations
   };
   
@@ -640,24 +739,157 @@ async function uploadBinaries(results, apiUrl, apiKey, repo, options = {}) {
     }
   }
   
-  // Report on threats found in existing files
-  const threats = existingReputations.filter(r => 
-    r.reputation && ['high', 'medium'].includes(r.reputation.overallThreatLevel)
-  );
-  if (threats.length > 0) {
-    console.log('\n' + '='.repeat(60));
-    console.log('\x1b[31m⚠  WARNING: THREATS DETECTED IN EXISTING FILES\x1b[0m');
-    console.log('='.repeat(60));
-    for (const t of threats) {
-      const level = t.reputation.overallThreatLevel.toUpperCase();
-      const color = level === 'HIGH' ? '\x1b[31m' : '\x1b[33m';
-      console.log(`${color}  [${level}]\x1b[0m ${t.file}`);
-      console.log(`         Package: ${t.package}@${t.version}`);
-      console.log(`         AV: ${t.reputation.antivirus.detectionRatio} (${t.reputation.antivirus.verdict})`);
+  // Report on threats found in existing files and emit GitHub Actions annotations
+  emitThreatAnnotations(existingReputations);
+  
+  return uploadResults;
+}
+
+/**
+ * Emit GitHub Actions annotations for threat detections
+ * @param {object[]} reputations - Array of reputation results
+ */
+function emitThreatAnnotations(reputations) {
+  if (!reputations || reputations.length === 0) return;
+  
+  const threats = {
+    high: [],
+    medium: [],
+    caution: []
+  };
+  
+  // Categorize threats by reputation type
+  for (const rep of reputations) {
+    if (!rep.reputation) continue;
+    
+    const file = rep.file;
+    const pkg = `${rep.package}@${rep.version}`;
+    const r = rep.reputation;
+    
+    // AV reputation
+    if (r.antivirus) {
+      const avLevel = r.antivirus.threatLevel;
+      if (avLevel === 'high') {
+        threats.high.push({
+          type: 'AV',
+          file,
+          pkg,
+          detail: `AV Detection: ${r.antivirus.detectionRatio} - ${r.antivirus.verdict}`,
+          topThreats: r.antivirus.topThreats?.slice(0, 3).join(', ')
+        });
+      } else if (avLevel === 'medium') {
+        threats.medium.push({
+          type: 'AV',
+          file,
+          pkg,
+          detail: `AV Detection: ${r.antivirus.detectionRatio} - ${r.antivirus.verdict}`
+        });
+      } else if (avLevel === 'caution') {
+        threats.caution.push({
+          type: 'AV',
+          file,
+          pkg,
+          detail: `AV Detection: ${r.antivirus.detectionRatio} - ${r.antivirus.verdict}`
+        });
+      }
+    }
+    
+    // Similarity reputation
+    if (r.similarity) {
+      const simLevel = r.similarity.threatLevel;
+      if (simLevel === 'high') {
+        threats.high.push({
+          type: 'Similarity',
+          file,
+          pkg,
+          detail: `Malicious clone detected (${r.similarity.cloneCount} clones, ${r.similarity.similarCount} similar)`
+        });
+      } else if (simLevel === 'medium') {
+        threats.medium.push({
+          type: 'Similarity',
+          file,
+          pkg,
+          detail: `Suspicious similarity (${r.similarity.similarCount} similar files)`
+        });
+      }
+    }
+    
+    // Signature reputation
+    if (r.signature) {
+      const sigLevel = r.signature.threatLevel;
+      if (sigLevel === 'high') {
+        threats.high.push({
+          type: 'Signature',
+          file,
+          pkg,
+          detail: `Invalid code signature: ${r.signature.signatureStatus}`
+        });
+      } else if (sigLevel === 'caution' && r.signature.signatureStatus === 'unsigned') {
+        threats.caution.push({
+          type: 'Signature',
+          file,
+          pkg,
+          detail: 'Unsigned binary'
+        });
+      }
     }
   }
   
-  return uploadResults;
+  // Print console summary
+  const totalThreats = threats.high.length + threats.medium.length + threats.caution.length;
+  if (totalThreats > 0) {
+    console.log('\n' + '='.repeat(60));
+    console.log('\x1b[31m⚠  THREAT ANALYSIS RESULTS\x1b[0m');
+    console.log('='.repeat(60));
+    
+    if (threats.high.length > 0) {
+      console.log(`\n\x1b[31m  HIGH THREATS: ${threats.high.length}\x1b[0m`);
+      for (const t of threats.high) {
+        console.log(`    [${t.type}] ${t.file}`);
+        console.log(`           Package: ${t.pkg}`);
+        console.log(`           ${t.detail}`);
+        if (t.topThreats) console.log(`           Threats: ${t.topThreats}`);
+      }
+    }
+    
+    if (threats.medium.length > 0) {
+      console.log(`\n\x1b[33m  MEDIUM THREATS: ${threats.medium.length}\x1b[0m`);
+      for (const t of threats.medium) {
+        console.log(`    [${t.type}] ${t.file}`);
+        console.log(`           Package: ${t.pkg}`);
+        console.log(`           ${t.detail}`);
+      }
+    }
+    
+    if (threats.caution.length > 0) {
+      console.log(`\n\x1b[33m  CAUTION: ${threats.caution.length}\x1b[0m`);
+      for (const t of threats.caution) {
+        console.log(`    [${t.type}] ${t.file}`);
+        console.log(`           ${t.detail}`);
+      }
+    }
+  }
+  
+  // Emit GitHub Actions annotations
+  // HIGH threats = errors
+  for (const t of threats.high) {
+    const msg = `[${t.type}] ${t.pkg}: ${t.detail}`;
+    console.log(`::error title=High Threat - ${t.type}::${t.file} - ${msg}`);
+  }
+  
+  // MEDIUM threats = warnings
+  for (const t of threats.medium) {
+    const msg = `[${t.type}] ${t.pkg}: ${t.detail}`;
+    console.log(`::warning title=Medium Threat - ${t.type}::${t.file} - ${msg}`);
+  }
+  
+  // CAUTION = notices
+  for (const t of threats.caution) {
+    const msg = `[${t.type}] ${t.pkg}: ${t.detail}`;
+    console.log(`::notice title=Caution - ${t.type}::${t.file} - ${msg}`);
+  }
+  
+  return threats;
 }
 
 /**
