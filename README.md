@@ -10,7 +10,9 @@ A GitHub Action and CLI tool that scans npm packages (`node_modules`) for binary
 - 📦 **Package Attribution**: Associates each binary with its parent npm package and version
 - 🔄 **Handles Nested Dependencies**: Scans all direct and transitive dependencies  
 - ☁️ **UnknownCyber Integration**: Upload binaries for malware analysis
-- 📊 **Detailed Reports**: JSON output with full scan results
+- 🔒 **Smart Deduplication**: Skips files already in UnknownCyber to save time and bandwidth
+- ⚠️ **Threat Detection**: Fetches and displays reputation data for existing files
+- 📊 **Detailed Reports**: JSON output with full scan results and threat assessments
 - 🚀 **GitHub Action**: Easy CI/CD integration
 
 ## Quick Start
@@ -67,6 +69,8 @@ node scanner.js --upload --api-key YOUR_API_KEY
 | `scan-path` | Path to directory containing node_modules | No | `.` |
 | `deep-scan` | Enable magic bytes detection (slower) | No | `false` |
 | `upload` | Upload binaries to UnknownCyber | No | `false` |
+| `skip-existing` | Skip files already in UnknownCyber | No | `true` |
+| `get-reputations` | Fetch threat data for existing files | No | `true` |
 | `api-url` | UnknownCyber API URL | No | `https://api.unknowncyber.com` |
 | `api-key` | UnknownCyber API key | No | `''` |
 | `repo` | Repository name to tag uploads with | No | `${{ github.repository }}` |
@@ -80,6 +84,8 @@ node scanner.js --upload --api-key YOUR_API_KEY
 | `results-file` | Path to the JSON results file |
 | `upload-successful` | Number of successfully uploaded files |
 | `upload-failed` | Number of failed uploads |
+| `upload-skipped` | Number of files skipped (already exist in UC) |
+| `threats-found` | Number of files with HIGH or MEDIUM threat level |
 
 ### Examples
 
@@ -94,13 +100,48 @@ node scanner.js --upload --api-key YOUR_API_KEY
   run: echo "Found ${{ steps.scan.outputs.total-binaries }} binaries"
 ```
 
-#### Scan with Upload
+#### Scan with Upload (Smart Deduplication)
 
 ```yaml
 - name: Scan and upload binaries
   uses: Unknown-Cyber-Inc/npm-binary-scanner@v1
+  id: scan
   with:
     upload: 'true'
+    api-key: ${{ secrets.UC_API_KEY }}
+
+- name: Check for threats
+  if: steps.scan.outputs.threats-found > 0
+  run: |
+    echo "::warning::Found ${{ steps.scan.outputs.threats-found }} files with elevated threat levels!"
+```
+
+By default, the scanner will:
+1. Compute SHA256 hashes of all binaries
+2. Check which files already exist in UnknownCyber
+3. Skip uploading existing files (saves time and bandwidth)
+4. Fetch and display reputation/threat data for existing files
+5. Warn about any HIGH or MEDIUM threat level files
+
+#### Force Upload All Files
+
+```yaml
+- name: Force upload all binaries
+  uses: Unknown-Cyber-Inc/npm-binary-scanner@v1
+  with:
+    upload: 'true'
+    skip-existing: 'false'  # Upload even if file exists
+    api-key: ${{ secrets.UC_API_KEY }}
+```
+
+#### Fast Scan (Skip Reputation Checks)
+
+```yaml
+- name: Quick scan and upload
+  uses: Unknown-Cyber-Inc/npm-binary-scanner@v1
+  with:
+    upload: 'true'
+    get-reputations: 'false'  # Don't fetch threat data for existing files
     api-key: ${{ secrets.UC_API_KEY }}
 ```
 
@@ -132,6 +173,25 @@ node scanner.js --upload --api-key YOUR_API_KEY
     echo "- Packages: ${{ steps.scan.outputs.total-packages }}" >> $GITHUB_STEP_SUMMARY
     echo "- Binaries: ${{ steps.scan.outputs.total-binaries }}" >> $GITHUB_STEP_SUMMARY
     echo "- Uploaded: ${{ steps.scan.outputs.upload-successful }}" >> $GITHUB_STEP_SUMMARY
+    echo "- Skipped (existing): ${{ steps.scan.outputs.upload-skipped }}" >> $GITHUB_STEP_SUMMARY
+    echo "- ⚠️ Threats found: ${{ steps.scan.outputs.threats-found }}" >> $GITHUB_STEP_SUMMARY
+```
+
+#### Fail on Threats Detected
+
+```yaml
+- name: Scan binaries
+  uses: Unknown-Cyber-Inc/npm-binary-scanner@v1
+  id: scan
+  with:
+    upload: 'true'
+    api-key: ${{ secrets.UC_API_KEY }}
+
+- name: Fail if threats found
+  if: steps.scan.outputs.threats-found > 0
+  run: |
+    echo "::error::Security scan found ${{ steps.scan.outputs.threats-found }} files with HIGH or MEDIUM threat levels!"
+    exit 1
 ```
 
 ## CLI Usage
@@ -144,8 +204,11 @@ node scanner.js [options] [path]
 Options:
   --deep              Enable deep scan using magic bytes
   --upload            Upload found binaries to UnknownCyber API
+  --force-upload      Upload all files even if they already exist in UC
+  --no-reputations    Skip fetching reputation data for existing files
   --api-url <url>     API base URL (or set UC_API_URL env var)
   --api-key <key>     API key (or set UC_API_KEY env var)
+  --repo <name>       Repository name for tagging (or set UC_REPO env var)
   --help, -h          Show help message
 ```
 
@@ -161,14 +224,71 @@ node scanner.js ./my-project
 # Deep scan with magic byte detection
 node scanner.js --deep
 
-# Scan and upload
+# Scan and upload (skips existing files by default)
 node scanner.js --upload --api-url https://api.unknowncyber.com --api-key YOUR_KEY
+
+# Force upload all files (ignore deduplication)
+node scanner.js --upload --force-upload --api-key YOUR_KEY
+
+# Fast upload without reputation checks
+node scanner.js --upload --no-reputations --api-key YOUR_KEY
 
 # Using environment variables
 export UC_API_URL="https://api.unknowncyber.com"
 export UC_API_KEY="your-api-key"
+export UC_REPO="my-org/my-repo"
 node scanner.js --upload
 ```
+
+## How Deduplication Works
+
+When uploading to UnknownCyber, the scanner performs smart deduplication:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  1. Scan node_modules for binaries                          │
+│     └─> Found 150 executables                               │
+│                                                             │
+│  2. Compute SHA256 hashes                                   │
+│     └─> Hashing [150/150]...                                │
+│                                                             │
+│  3. Check existing files in UnknownCyber                    │
+│     └─> 120 already exist, 30 are new                       │
+│                                                             │
+│  4. Fetch reputation data for existing files                │
+│     └─> HIGH: 2, MEDIUM: 5, LOW: 113                        │
+│                                                             │
+│  5. Upload only new files                                   │
+│     └─> Uploading 30 new files...                           │
+│                                                             │
+│  6. Report threats                                          │
+│     └─> ⚠ WARNING: 7 files with elevated threat levels!    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+This approach:
+- **Saves bandwidth** by not re-uploading existing files
+- **Saves time** by parallelizing hash lookups
+- **Provides immediate insights** on known threats in your dependencies
+- **Maintains history** by preserving existing analysis data
+
+## Threat Levels
+
+When reputation data is fetched, files are categorized by threat level:
+
+| Level | Description | Action |
+|-------|-------------|--------|
+| **HIGH** | Known malware or high-confidence malicious | 🔴 Immediate investigation required |
+| **MEDIUM** | Suspicious behavior or moderate risk | 🟠 Review recommended |
+| **CAUTION** | Minor concerns or low-confidence detections | 🟡 Monitor |
+| **LOW** | Minimal risk indicators | 🟢 Generally safe |
+| **NONE** | No threats detected | ✅ Clean |
+| **UNKNOWN** | Not enough data for assessment | ❓ Pending analysis |
+
+Threat assessment is based on three factors:
+1. **Antivirus Results**: Detection ratio from multiple AV engines
+2. **Genomic Similarity**: Code similarity to known malware
+3. **Code Signing**: Digital signature validity
 
 ## Detected Binary Types
 
@@ -198,7 +318,8 @@ When uploading to UnknownCyber, each executable is tagged with:
 | Field | Format | Example |
 |-------|--------|---------|
 | **Filename** | Path below `node_modules` | `@esbuild/win32-x64/esbuild.exe` |
-| **Package Tag** | `SW_<package>@<version>` | `SW_@esbuild/win32-x64@0.20.2` |
+| **SHA256** | File hash | `e3b0c44298fc1c14...` |
+| **Package Tag** | `SW_<package>_<version>` | `SW_@esbuild/win32-x64_0.20.2` |
 | **Repo Tag** | `REPO_<owner>/<repo>` | `REPO_my-org/my-app` |
 
 The repository tag helps identify which project the binary came from, useful when the same package version appears in multiple repositories.
@@ -211,6 +332,39 @@ The repository tag helps identify which project the binary came from, useful whe
    - Click "New repository secret"
    - Name: `UC_API_KEY`
    - Value: Your API key
+
+## Output Files
+
+The scanner produces a JSON report (`binary-scan-results.json`) containing:
+
+```json
+{
+  "scanPath": "/path/to/node_modules",
+  "scanDate": "2024-01-15T10:30:00.000Z",
+  "totalPackages": 25,
+  "totalExecutables": 150,
+  "totalBinaries": 145,
+  "totalScripts": 5,
+  "packages": [...],
+  "uploadResults": {
+    "successful": [...],
+    "failed": [...],
+    "skipped": [...],
+    "reputations": [
+      {
+        "file": "@esbuild/win32-x64/esbuild.exe",
+        "sha256": "abc123...",
+        "reputation": {
+          "overallThreatLevel": "none",
+          "antivirus": { "verdict": "clean", "detectionRatio": "0/70" },
+          "similarity": { "hasMaliciousMatches": false },
+          "signature": { "signatureStatus": "valid_signed" }
+        }
+      }
+    ]
+  }
+}
+```
 
 ## Common Packages with Binaries
 
@@ -232,6 +386,7 @@ This tool helps with:
 2. **License Compliance** - Native binaries may have different licensing
 3. **Security Review** - Native code can have vulnerabilities not caught by JS scanners
 4. **Malware Detection** - Upload to UnknownCyber for analysis
+5. **Threat Monitoring** - Get alerts when known-bad binaries appear in dependencies
 
 ## Requirements
 
