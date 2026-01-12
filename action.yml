@@ -186,19 +186,19 @@ runs:
         fi
 
     - name: Setup Python for YARA
-      if: inputs.yara-scan == 'true'
+      if: ${{ inputs.yara-scan == 'true' }}
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
 
     - name: Install YARA Python
-      if: inputs.yara-scan == 'true'
+      if: ${{ inputs.yara-scan == 'true' }}
       shell: bash
       run: pip install yara-python>=4.3.0
 
     - name: Run YARA Scanner
       id: yara
-      if: inputs.yara-scan == 'true'
+      if: ${{ inputs.yara-scan == 'true' }}
       shell: bash
       env:
         SCAN_PATH: ${{ inputs.scan-path }}
@@ -234,7 +234,7 @@ runs:
         fi
 
     - name: Upload YARA-matched files
-      if: inputs.upload == 'true' && inputs.yara-scan == 'true'
+      if: ${{ inputs.upload == 'true' && inputs.yara-scan == 'true' }}
       shell: bash
       env:
         UC_API_KEY: ${{ inputs.api-key }}
@@ -249,7 +249,7 @@ runs:
 
     - name: Run License Checker
       id: license
-      if: inputs.license-check == 'true'
+      if: ${{ inputs.license-check == 'true' }}
       shell: bash
       env:
         SCAN_PATH: ${{ inputs.scan-path }}
@@ -295,14 +295,14 @@ runs:
         overwrite: true
 
     - name: Generate Summary Report
-      if: inputs.generate-summary == 'true' && always()
+      if: ${{ always() && inputs.generate-summary == 'true' }}
       shell: bash
       run: |
         cd "${{ inputs.scan-path }}"
         node "${{ github.action_path }}/generate-summary.js"
 
     - name: Fail on Threats
-      if: inputs.fail-on-threats == 'true'
+      if: ${{ inputs.fail-on-threats == 'true' }}
       shell: bash
       run: |
         THREATS="${{ steps.scan.outputs.threats-found }}"
@@ -321,7 +321,7 @@ runs:
         echo "No blocking threats detected"
 
     - name: Fail on License Issues
-      if: inputs.fail-on-license == 'true'
+      if: ${{ inputs.fail-on-license == 'true' }}
       shell: bash
       run: |
         LICENSE_DENIED="${{ steps.license.outputs.license-denied }}"

@@ -132,6 +132,48 @@ function generateYaraSummary(yaraResults) {
   return output;
 }
 
+function generateLicenseSummary(licenseResults) {
+  let output = '';
+  
+  const allowed = licenseResults.allowed?.length || 0;
+  const warning = licenseResults.warning?.length || 0;
+  const denied = licenseResults.denied?.length || 0;
+  const unknown = licenseResults.unknown?.length || 0;
+  
+  output += '### 📜 License Compliance\n';
+  output += '| Status | Count |\n';
+  output += '|--------|-------|\n';
+  output += `| ✅ Allowed | ${allowed} |\n`;
+  output += `| ⚠️ Warning | ${warning} |\n`;
+  output += `| ❌ Denied | ${denied} |\n`;
+  output += `| ❓ Unknown | ${unknown} |\n`;
+  output += '\n';
+  
+  if (denied > 0) {
+    output += '#### ❌ Denied Licenses\n';
+    output += '| Package | Version | License |\n';
+    output += '|---------|---------|----------|\n';
+    licenseResults.denied.forEach(pkg => {
+      output += `| ${pkg.name} | ${pkg.version} | ${pkg.license} |\n`;
+    });
+    output += '\n';
+  }
+  
+  if (warning > 0 && warning <= 10) {
+    output += '#### ⚠️ Licenses Needing Review\n';
+    output += '| Package | Version | License |\n';
+    output += '|---------|---------|----------|\n';
+    licenseResults.warning.forEach(pkg => {
+      output += `| ${pkg.name} | ${pkg.version} | ${pkg.license} |\n`;
+    });
+    output += '\n';
+  } else if (warning > 10) {
+    output += `#### ⚠️ ${warning} packages need license review\n\n`;
+  }
+  
+  return output;
+}
+
 function main() {
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;
   
@@ -160,6 +202,17 @@ function main() {
       output += generateYaraSummary(yaraResults);
     } catch (e) {
       console.error('Error parsing yara-results.json:', e.message);
+    }
+  }
+  
+  // License results
+  const licenseResultsPath = 'license-results.json';
+  if (fs.existsSync(licenseResultsPath)) {
+    try {
+      const licenseResults = JSON.parse(fs.readFileSync(licenseResultsPath, 'utf8'));
+      output += generateLicenseSummary(licenseResults);
+    } catch (e) {
+      console.error('Error parsing license-results.json:', e.message);
     }
   }
   
