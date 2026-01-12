@@ -319,13 +319,18 @@ function generateBoundary() {
 
 /**
  * Upload a file to UnknownCyber API using streams for large files
+ * @param {string} apiUrl - API base URL
+ * @param {string} apiKey - API key
+ * @param {string} filePath - Local file path
+ * @param {string} filename - Filename for upload
+ * @param {string[]} tags - Array of tags to attach
  */
-function uploadFile(apiUrl, apiKey, filePath, filename, tag) {
+function uploadFile(apiUrl, apiKey, filePath, filename, tags) {
   return new Promise((resolve, reject) => {
     const boundary = generateBoundary();
     const fileSize = fs.statSync(filePath).size;
     
-    // Query parameters for upload
+    // Build query parameters - each tag as separate tags[] parameter
     const queryParams = new URLSearchParams({
       key: apiKey,
       skip_unpack: 'false',
@@ -334,24 +339,39 @@ function uploadFile(apiUrl, apiKey, filePath, filename, tag) {
       retain_wrapper: 'true',
       no_links: 'true'
     });
+    // Add each tag as a separate tags[] query parameter
+    for (const tag of tags) {
+      queryParams.append('tags[]', tag);
+    }
     
     const url = new URL(`${apiUrl}/v2/files?${queryParams.toString()}`);
     
-    // Build form data parts
-    const fields = {
-      filename: filename,
-      tags: tag,
-      notes: `Binary from npm package, scanned on ${new Date().toISOString()}`,
-      password: ''
-    };
-    
-    // Pre-file parts
+    // Build form data parts - each tag as separate multipart section
     let preFileData = '';
-    for (const [name, value] of Object.entries(fields)) {
+    
+    // Filename field
+    preFileData += `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="filename"\r\n\r\n` +
+      `${filename}\r\n`;
+    
+    // Each tag as a separate form-data part with name="tags"
+    for (const tag of tags) {
       preFileData += `--${boundary}\r\n` +
-        `Content-Disposition: form-data; name="${name}"\r\n\r\n` +
-        `${value}\r\n`;
+        `Content-Disposition: form-data; name="tags"\r\n\r\n` +
+        `${tag}\r\n`;
     }
+    
+    // Notes field
+    preFileData += `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="notes"\r\n\r\n` +
+      `Binary from npm package, scanned on ${new Date().toISOString()}\r\n`;
+    
+    // Password field (empty)
+    preFileData += `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="password"\r\n\r\n` +
+      `\r\n`;
+    
+    // File data part header
     preFileData += `--${boundary}\r\n` +
       `Content-Disposition: form-data; name="filedata"; filename="${path.basename(filePath)}"\r\n` +
       `Content-Type: application/octet-stream\r\n\r\n`;
@@ -563,7 +583,7 @@ async function syncTagsForExisting(existingFiles, apiUrl, apiKey, repo) {
       
       // Build expected tags
       const expectedTags = [];
-      expectedTags.push(`SW_${file.package}@${file.version}`.replace(/\s+/g, '_'));
+      expectedTags.push(`SW_${file.package}_${file.version}`.replace(/\s+/g, '_'));
       if (repo) {
         expectedTags.push(`REPO_${repo}`.replace(/\s+/g, '_'));
       }
@@ -695,13 +715,12 @@ async function uploadBinaries(results, apiUrl, apiKey, repo, options = {}) {
   for (let i = 0; i < toUpload.length; i++) {
     const binary = toUpload[i];
     
-    // Build tags array: SW_<package>@<version> and optionally REPO_<repo>
+    // Build tags array: SW_<package>_<version> and optionally REPO_<repo>
     const tags = [];
-    tags.push(`SW_${binary.package}@${binary.version}`.replace(/\s+/g, '_'));
+    tags.push(`SW_${binary.package}_${binary.version}`.replace(/\s+/g, '_'));
     if (repo) {
       tags.push(`REPO_${repo}`.replace(/\s+/g, '_'));
     }
-    const tagString = tags.join(',');
     
     // Filename is the path below node_modules (using forward slashes)
     const filename = binary.file.replace(/\\/g, '/');
@@ -709,7 +728,7 @@ async function uploadBinaries(results, apiUrl, apiKey, repo, options = {}) {
     process.stdout.write(`[${i + 1}/${toUpload.length}] Uploading ${filename}... `);
     
     try {
-      const result = await uploadFile(apiUrl, apiKey, binary.absolutePath, filename, tagString);
+      const result = await uploadFile(apiUrl, apiKey, binary.absolutePath, filename, tags);
       
         if (result.success) {
           console.log('\x1b[32m✓ OK\x1b[0m');
@@ -1211,7 +1230,7 @@ Upload Behavior:
 Upload Details:
   When --upload is specified, each executable is uploaded with:
   - Filename: Path relative to node_modules (e.g., "@esbuild/win32-x64/esbuild.exe")
-  - Tags: "SW_<package>@<version>" (e.g., "SW_@esbuild/win32-x64@0.20.2")
+  - Tags: "SW_<package>_<version>" (e.g., "SW_@esbuild/win32-x64_0.20.2")
           "REPO_<repo>" if --repo is specified (e.g., "REPO_my-org/my-repo")
 
 Output:
