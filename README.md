@@ -39,8 +39,12 @@ Beyond signature-based detection, UnknownCyber analyzes the **structural DNA** o
 - **Polymorphic malware**: Code that mutates to evade signatures
 - **Repacked threats**: Known malware hidden in new wrappers
 - **Code reuse**: Components borrowed from known malicious families
+- **Vulnerable code**: Libraries with known CVEs reused across packages
+- **Trojanized packages**: Malicious code injected between versions—a common supply chain attack TTP
 
 Even if a file is brand new and has zero AV detections, genomic analysis can identify it as structurally similar to known threats—catching attacks before they're widely recognized.
+
+By tracking code across successive versions, UnknownCyber can detect when legitimate packages are compromised—identifying the exact code changes that introduce backdoors or malware, even when attackers try to hide modifications in otherwise normal updates.
 
 ### 🔍 YARA Pattern Scanning
 
