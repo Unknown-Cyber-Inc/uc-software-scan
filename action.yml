@@ -67,6 +67,18 @@ inputs:
     description: 'Fail the action if HIGH/MEDIUM threats or high-severity YARA matches are found'
     required: false
     default: 'false'
+  license-check:
+    description: 'Enable license compliance checking'
+    required: false
+    default: 'false'
+  license-policy:
+    description: 'License policy file path or preset (permissive, strict, copyleft-ok)'
+    required: false
+    default: 'permissive'
+  fail-on-license:
+    description: 'Fail the action if denied licenses are found'
+    required: false
+    default: 'false'
 
 outputs:
   total-packages:
@@ -96,6 +108,15 @@ outputs:
   yara-high-severity:
     description: 'Number of files with high/critical severity YARA matches'
     value: ${{ steps.yara.outputs.yara-high-severity }}
+  license-allowed:
+    description: 'Number of packages with allowed licenses'
+    value: ${{ steps.license.outputs.license-allowed }}
+  license-warning:
+    description: 'Number of packages with licenses needing review'
+    value: ${{ steps.license.outputs.license-warning }}
+  license-denied:
+    description: 'Number of packages with denied licenses'
+    value: ${{ steps.license.outputs.license-denied }}
 
 runs:
   using: 'composite'
@@ -120,7 +141,6 @@ runs:
         UC_API_KEY: ${{ inputs.api-key }}
         UC_REPO: ${{ inputs.repo }}
       run: |
-        # Build command arguments
         ARGS=""
         if [ "$DEEP_SCAN" = "true" ]; then
           ARGS="$ARGS --deep"
@@ -144,10 +164,8 @@ runs:
           ARGS="$ARGS --repo $UC_REPO"
         fi
         
-        # Run the scanner
         node "${{ github.action_path }}/scanner.js" $ARGS "$SCAN_PATH"
         
-        # Parse results from JSON
         if [ -f "$SCAN_PATH/binary-scan-results.json" ]; then
           TOTAL_PACKAGES=$(node -e "console.log(require('./$SCAN_PATH/binary-scan-results.json').totalPackages)")
           TOTAL_BINARIES=$(node -e "console.log(require('./$SCAN_PATH/binary-scan-results.json').totalBinaries)")
@@ -156,7 +174,6 @@ runs:
           echo "total-binaries=$TOTAL_BINARIES" >> $GITHUB_OUTPUT
           echo "results-file=$SCAN_PATH/binary-scan-results.json" >> $GITHUB_OUTPUT
           
-          # Check for upload results
           UPLOAD_SUCCESS=$(node -e "const r = require('./$SCAN_PATH/binary-scan-results.json'); console.log(r.uploadResults?.successful?.length || 0)")
           UPLOAD_FAILED=$(node -e "const r = require('./$SCAN_PATH/binary-scan-results.json'); console.log(r.uploadResults?.failed?.length || 0)")
           UPLOAD_SKIPPED=$(node -e "const r = require('./$SCAN_PATH/binary-scan-results.json'); console.log(r.uploadResults?.skipped?.length || 0)")
@@ -188,14 +205,10 @@ runs:
         YARA_RULES: ${{ inputs.yara-rules }}
         YARA_INCLUDE: ${{ inputs.yara-include }}
       run: |
-        # Build YARA command arguments
-        YARA_ARGS="--output $SCAN_PATH/yara-results.json"
-        YARA_ARGS="$YARA_ARGS --github-annotations"
+        YARA_ARGS="--output $SCAN_PATH/yara-results.json --github-annotations"
         
-        # If include patterns provided, scan files directly; otherwise scan binaries from results
         if [ -n "$YARA_INCLUDE" ]; then
           YARA_ARGS="$YARA_ARGS --dir $SCAN_PATH/node_modules"
-          # Split comma-separated patterns and add each as --include
           IFS=',' read -ra PATTERNS <<< "$YARA_INCLUDE"
           for pattern in "${PATTERNS[@]}"; do
             YARA_ARGS="$YARA_ARGS --include \"$pattern\""
@@ -204,19 +217,15 @@ runs:
           YARA_ARGS="$YARA_ARGS --input $SCAN_PATH/binary-scan-results.json"
         fi
         
-        # Add user-provided rules if specified
         if [ -n "$YARA_RULES" ]; then
           YARA_ARGS="$YARA_ARGS --rules $YARA_RULES"
         fi
         
-        # Run YARA scanner
         eval python "${{ github.action_path }}/yara_scanner.py" $YARA_ARGS
         
-        # Parse YARA results
         if [ -f "$SCAN_PATH/yara-results.json" ]; then
           YARA_MATCHES=$(node -e "console.log(require('./$SCAN_PATH/yara-results.json').filesWithMatches || 0)")
           YARA_HIGH=$(node -e "const r = require('./$SCAN_PATH/yara-results.json'); const matches = r.results || []; let count = 0; matches.forEach(m => m.matches.forEach(x => { if(['critical','high'].includes(x.meta?.severity)) count++; })); console.log(count)")
-          
           echo "yara-matches=$YARA_MATCHES" >> $GITHUB_OUTPUT
           echo "yara-high-severity=$YARA_HIGH" >> $GITHUB_OUTPUT
         else
@@ -225,7 +234,7 @@ runs:
         fi
 
     - name: Upload YARA-matched files
-      if: ${{ inputs.upload == 'true' && inputs.yara-scan == 'true' }}
+      if: inputs.upload == 'true' && inputs.yara-scan == 'true'
       shell: bash
       env:
         UC_API_KEY: ${{ inputs.api-key }}
@@ -238,6 +247,41 @@ runs:
           --binary-results binary-scan-results.json \
           --node-modules node_modules
 
+    - name: Run License Checker
+      id: license
+      if: inputs.license-check == 'true'
+      shell: bash
+      env:
+        SCAN_PATH: ${{ inputs.scan-path }}
+        LICENSE_POLICY: ${{ inputs.license-policy }}
+      run: |
+        cd "${{ inputs.scan-path }}"
+        
+        POLICY_ARG=""
+        if [ -n "$LICENSE_POLICY" ]; then
+          POLICY_ARG="--policy $LICENSE_POLICY"
+        fi
+        
+        node "${{ github.action_path }}/license-checker.js" \
+          --path node_modules \
+          --output license-results.json \
+          --github-annotations \
+          --github-summary \
+          $POLICY_ARG || true
+        
+        if [ -f "license-results.json" ]; then
+          LICENSE_ALLOWED=$(node -e "console.log(require('./license-results.json').allowed?.length || 0)")
+          LICENSE_WARNING=$(node -e "console.log(require('./license-results.json').warning?.length || 0)")
+          LICENSE_DENIED=$(node -e "console.log(require('./license-results.json').denied?.length || 0)")
+          echo "license-allowed=$LICENSE_ALLOWED" >> $GITHUB_OUTPUT
+          echo "license-warning=$LICENSE_WARNING" >> $GITHUB_OUTPUT
+          echo "license-denied=$LICENSE_DENIED" >> $GITHUB_OUTPUT
+        else
+          echo "license-allowed=0" >> $GITHUB_OUTPUT
+          echo "license-warning=0" >> $GITHUB_OUTPUT
+          echo "license-denied=0" >> $GITHUB_OUTPUT
+        fi
+
     - name: Upload Results Artifact
       uses: actions/upload-artifact@v4
       if: always()
@@ -246,6 +290,45 @@ runs:
         path: |
           ${{ inputs.scan-path }}/binary-scan-results.json
           ${{ inputs.scan-path }}/yara-results.json
+          ${{ inputs.scan-path }}/license-results.json
         retention-days: 30
         overwrite: true
 
+    - name: Generate Summary Report
+      if: inputs.generate-summary == 'true' && always()
+      shell: bash
+      run: |
+        cd "${{ inputs.scan-path }}"
+        node "${{ github.action_path }}/generate-summary.js"
+
+    - name: Fail on Threats
+      if: inputs.fail-on-threats == 'true'
+      shell: bash
+      run: |
+        THREATS="${{ steps.scan.outputs.threats-found }}"
+        YARA_HIGH="${{ steps.yara.outputs.yara-high-severity }}"
+        
+        if [ "$THREATS" != "0" ] && [ -n "$THREATS" ]; then
+          echo "::error::Security threats detected: $THREATS files with HIGH or MEDIUM threat level"
+          exit 1
+        fi
+        
+        if [ "$YARA_HIGH" != "0" ] && [ -n "$YARA_HIGH" ]; then
+          echo "::error::YARA high-severity matches found: $YARA_HIGH"
+          exit 1
+        fi
+        
+        echo "No blocking threats detected"
+
+    - name: Fail on License Issues
+      if: inputs.fail-on-license == 'true'
+      shell: bash
+      run: |
+        LICENSE_DENIED="${{ steps.license.outputs.license-denied }}"
+        
+        if [ "$LICENSE_DENIED" != "0" ] && [ -n "$LICENSE_DENIED" ]; then
+          echo "::error::License compliance failed: $LICENSE_DENIED packages with denied licenses"
+          exit 1
+        fi
+        
+        echo "No license compliance issues"

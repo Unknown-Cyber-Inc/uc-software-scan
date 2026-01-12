@@ -96,7 +96,7 @@ Beyond security scanning, uploading to UnknownCyber builds a **centralized inven
 - 🏷️ **Automatic Tagging**: Tags files with package manager, package name, version, and repository
 - ⚠️ **Pipeline Integration**: Blocks CI/CD on high-severity threats with detailed annotations
 - 📊 **Detailed Reports**: JSON output with full scan results and threat assessments
-- 🚀 **GitHub Action & CLI**: Flexible integration options
+- 🚀 **GitHub Action & CLI**: Flexible integoptions
 
 ## Quick Start
 
@@ -164,6 +164,9 @@ node scanner.js --upload --api-key YOUR_API_KEY
 | `yara-include` | File patterns for YARA (e.g., `*.js,*.html`) | No | `''` |
 | `generate-summary` | Generate summary report with links to UC reports | No | `false` |
 | `fail-on-threats` | Fail if HIGH/MEDIUM threats or high-severity YARA matches found | No | `false` |
+| `license-check` | Enable license compliance checking | No | `false` |
+| `license-policy` | Policy file or preset (`permissive`, `strict`, `copyleft-ok`) | No | `permissive` |
+| `fail-on-license` | Fail if denied licenses are found | No | `false` |
 
 ### Outputs
 
@@ -178,6 +181,9 @@ node scanner.js --upload --api-key YOUR_API_KEY
 | `threats-found` | Number of files with HIGH or MEDIUM threat level |
 | `yara-matches` | Number of files with YARA rule matches |
 | `yara-high-severity` | Number of high/critical severity YARA matches |
+| `license-allowed` | Number of packages with allowed licenses |
+| `license-warning` | Number of packages needing license review |
+| `license-denied` | Number of packages with denied licenses |
 
 ### Examples
 
@@ -455,6 +461,65 @@ When files already exist in UnknownCyber, the scanner automatically syncs tags:
 - Checks existing tags on each file
 - Adds missing `SW_npm/<package>_<version>` and `REPO_<repo>` tags
 - Ensures consistent tagging across repositories
+
+## License Compliance
+
+The scanner can check npm package licenses against a configurable policy to detect licensing issues that could create legal or compliance risks.
+
+📖 **[Full License Compliance Guide](docs/LICENSE-COMPLIANCE.md)** - Comprehensive documentation on license types, risks, and best practices.
+
+### Quick Start
+
+```yaml
+- name: Scan with license check
+  uses: Unknown-Cyber-Inc/npm-package-scanner@v1
+  with:
+    license-check: 'true'
+    fail-on-license: 'true'
+```
+
+### Policy Presets
+
+| Preset | Description |
+|--------|-------------|
+| `permissive` | Default. Allows MIT, Apache-2.0, BSD. Warns on LGPL, MPL. Denies GPL, AGPL. |
+| `strict` | All non-permissive licenses require review |
+| `copyleft-ok` | Allows GPL/LGPL (for open source projects) |
+
+### Custom Policy
+
+Create a `license-policy.json` file:
+
+```json
+{
+  "allowed": ["MIT", "Apache-2.0", "BSD-3-Clause"],
+  "warning": ["LGPL-3.0", "MPL-2.0"],
+  "denied": ["GPL-3.0", "AGPL-3.0"],
+  "unknownPolicy": "warning",
+  "overrides": {
+    "reviewed-package": "allowed"
+  }
+}
+```
+
+Use it in your workflow:
+
+```yaml
+- name: Scan with custom policy
+  uses: Unknown-Cyber-Inc/npm-package-scanner@v1
+  with:
+    license-check: 'true'
+    license-policy: './license-policy.json'
+    fail-on-license: 'true'
+```
+
+### License Categories
+
+| Category | Examples | Risk |
+|----------|----------|------|
+| ✅ **Allowed** | MIT, Apache-2.0, BSD, ISC | Safe for commercial use |
+| ⚠️ **Warning** | LGPL, MPL, EPL | May have conditions, review recommended |
+| ❌ **Denied** | GPL, AGPL, SSPL, CC-NC | Strong copyleft or commercial restrictions |
 
 ## YARA Scanning
 
