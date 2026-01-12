@@ -1,5 +1,5 @@
-name: 'NPM Binary Scanner'
-description: 'Scans npm packages for binary executables and optionally uploads them to UnknownCyber for analysis'
+name: 'Package Binary Scanner'
+description: 'Scans package directories for binary executables and optionally uploads them to UnknownCyber for analysis. Supports npm, pip, maven, cargo, go, and ruby ecosystems.'
 author: 'UnknownCyber'
 
 branding:
@@ -8,9 +8,13 @@ branding:
 
 inputs:
   scan-path:
-    description: 'Path to the directory containing node_modules to scan'
+    description: 'Path to the directory to scan'
     required: false
     default: '.'
+  ecosystems:
+    description: 'Comma-separated list of ecosystems to scan (npm, pip, maven, cargo, go, ruby, generic). If empty, auto-detects.'
+    required: false
+    default: ''
   deep-scan:
     description: 'Enable deep scan using magic bytes detection (slower but more thorough)'
     required: false
@@ -32,7 +36,7 @@ inputs:
     required: false
     default: 'false'
   include-all-files:
-    description: 'Include ALL files in node_modules (not just executables)'
+    description: 'Include ALL files in package directories (not just executables)'
     required: false
     default: 'false'
   api-url:
@@ -68,7 +72,7 @@ inputs:
     required: false
     default: 'false'
   license-check:
-    description: 'Enable license compliance checking'
+    description: 'Enable license compliance checking (npm only)'
     required: false
     default: 'false'
   license-policy:
@@ -102,6 +106,9 @@ outputs:
   threats-found:
     description: 'Number of files with HIGH or MEDIUM threat level'
     value: ${{ steps.scan.outputs.threats-found }}
+  ecosystems-scanned:
+    description: 'List of ecosystems that were scanned'
+    value: ${{ steps.scan.outputs.ecosystems-scanned }}
   yara-matches:
     description: 'Number of files with YARA rule matches'
     value: ${{ steps.yara.outputs.yara-matches }}
@@ -131,6 +138,7 @@ runs:
       shell: bash
       env:
         SCAN_PATH: ${{ inputs.scan-path }}
+        ECOSYSTEMS: ${{ inputs.ecosystems }}
         DEEP_SCAN: ${{ inputs.deep-scan }}
         UPLOAD: ${{ inputs.upload }}
         SKIP_EXISTING: ${{ inputs.skip-existing }}
@@ -142,6 +150,9 @@ runs:
         UC_REPO: ${{ inputs.repo }}
       run: |
         ARGS=""
+        if [ -n "$ECOSYSTEMS" ]; then
+          ARGS="$ARGS --ecosystem $ECOSYSTEMS"
+        fi
         if [ "$DEEP_SCAN" = "true" ]; then
           ARGS="$ARGS --deep"
         fi
@@ -168,10 +179,12 @@ runs:
         
         if [ -f "$SCAN_PATH/binary-scan-results.json" ]; then
           TOTAL_PACKAGES=$(node -e "console.log(require('./$SCAN_PATH/binary-scan-results.json').totalPackages)")
-          TOTAL_BINARIES=$(node -e "console.log(require('./$SCAN_PATH/binary-scan-results.json').totalBinaries)")
+          TOTAL_BINARIES=$(node -e "console.log(require('./$SCAN_PATH/binary-scan-results.json').totalBinaries || require('./$SCAN_PATH/binary-scan-results.json').totalFiles)")
+          ECOSYSTEMS_SCANNED=$(node -e "console.log((require('./$SCAN_PATH/binary-scan-results.json').ecosystems || ['npm']).join(','))")
           
           echo "total-packages=$TOTAL_PACKAGES" >> $GITHUB_OUTPUT
           echo "total-binaries=$TOTAL_BINARIES" >> $GITHUB_OUTPUT
+          echo "ecosystems-scanned=$ECOSYSTEMS_SCANNED" >> $GITHUB_OUTPUT
           echo "results-file=$SCAN_PATH/binary-scan-results.json" >> $GITHUB_OUTPUT
           
           UPLOAD_SUCCESS=$(node -e "const r = require('./$SCAN_PATH/binary-scan-results.json'); console.log(r.uploadResults?.successful?.length || 0)")
@@ -208,7 +221,8 @@ runs:
         YARA_ARGS="--output $SCAN_PATH/yara-results.json --github-annotations"
         
         if [ -n "$YARA_INCLUDE" ]; then
-          YARA_ARGS="$YARA_ARGS --dir $SCAN_PATH/node_modules"
+          # Use the scan path directly for YARA include patterns
+          YARA_ARGS="$YARA_ARGS --dir $SCAN_PATH"
           IFS=',' read -ra PATTERNS <<< "$YARA_INCLUDE"
           for pattern in "${PATTERNS[@]}"; do
             YARA_ARGS="$YARA_ARGS --include \"$pattern\""
@@ -245,7 +259,7 @@ runs:
         node "${{ github.action_path }}/upload-yara-files.js" \
           --yara-results yara-results.json \
           --binary-results binary-scan-results.json \
-          --node-modules node_modules
+          --scan-path .
 
     - name: Run License Checker
       id: license
@@ -262,12 +276,15 @@ runs:
           POLICY_ARG="--policy $LICENSE_POLICY"
         fi
         
-        node "${{ github.action_path }}/license-checker.js" \
-          --path node_modules \
-          --output license-results.json \
-          --github-annotations \
-          --github-summary \
-          $POLICY_ARG || true
+        # License checker currently only supports npm
+        if [ -d "node_modules" ]; then
+          node "${{ github.action_path }}/license-checker.js" \
+            --path node_modules \
+            --output license-results.json \
+            --github-annotations \
+            --github-summary \
+            $POLICY_ARG || true
+        fi
         
         if [ -f "license-results.json" ]; then
           LICENSE_ALLOWED=$(node -e "console.log(require('./license-results.json').allowed?.length || 0)")

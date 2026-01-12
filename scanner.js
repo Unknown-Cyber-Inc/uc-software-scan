@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * NPM Binary Scanner
- * Scans npm packages (node_modules) for binary executables like DLL, EXE, ELF, SO, etc.
+ * Multi-Ecosystem Package Scanner
+ * 
+ * Scans package directories for binary executables and scripts.
+ * Supports multiple package ecosystems: npm, pip, maven, cargo, go, ruby.
  * Reports the package name, version, and file paths for each binary found.
  * Optionally uploads found binaries to UnknownCyber API.
  */
@@ -13,6 +15,15 @@ const crypto = require('crypto');
 const https = require('https');
 const http = require('http');
 const { URL } = require('url');
+
+// Ecosystem configuration module
+const { 
+  ECOSYSTEMS, 
+  detectEcosystems, 
+  getEcosystem, 
+  getAvailableEcosystems,
+  findEcosystemDirectory 
+} = require('./ecosystems');
 
 // File reputation module for checking existing files
 const { createReputationClient, checkFileExistence, getFileReputations, getFileTags, addFileTags } = require('./file-reputation');
@@ -30,7 +41,9 @@ const BINARY_EXTENSIONS = new Set([
   // General
   '.bin', '.dat',
   // WebAssembly
-  '.wasm'
+  '.wasm',
+  // Java
+  '.jar', '.war', '.ear', '.class'
 ]);
 
 // Executable script extensions (text-based but can execute malicious code)
@@ -58,6 +71,10 @@ const MAGIC_SIGNATURES = {
   FAT_BINARY: Buffer.from([0xca, 0xfe, 0xba, 0xbe]),
   // WebAssembly
   WASM: Buffer.from([0x00, 0x61, 0x73, 0x6d]),
+  // Java class file
+  JAVA_CLASS: Buffer.from([0xca, 0xfe, 0xba, 0xbe]),
+  // ZIP (JAR, WAR, etc.)
+  ZIP: Buffer.from([0x50, 0x4b, 0x03, 0x04]),
 };
 
 // Directories to skip for faster scanning
@@ -65,7 +82,9 @@ const SKIP_DIRS = new Set([
   '.bin', '.cache', '.git', '.github', '.vscode',
   '__tests__', '__mocks__', 'test', 'tests', 'spec', 'specs',
   'docs', 'doc', 'documentation', 'example', 'examples',
-  'coverage', '.nyc_output', 'typings', '@types'
+  'coverage', '.nyc_output', 'typings', '@types',
+  '__pycache__', '.pytest_cache', '.tox', '.mypy_cache',
+  '.gradle', '.idea', '.settings'
 ]);
 
 // File patterns to skip (no binaries here)
@@ -77,7 +96,9 @@ const SKIP_PATTERNS = [
   /\.json$/,
   /\.yml$/,
   /\.yaml$/,
-  /\.lock$/
+  /\.lock$/,
+  /\.pyc$/,
+  /\.pyo$/
 ];
 
 let deepMagicScan = false;
@@ -181,45 +202,14 @@ function shouldSkipFile(filename) {
 }
 
 /**
- * Find the nearest package.json for a given file path
- */
-function findPackageInfo(filePath, nodeModulesRoot) {
-  let dir = path.dirname(filePath);
-  
-  while (dir.length >= nodeModulesRoot.length) {
-    const packageJsonPath = path.join(dir, 'package.json');
-    
-    if (fs.existsSync(packageJsonPath)) {
-      try {
-        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-        const relativePath = path.relative(nodeModulesRoot, dir);
-        
-        // Determine if it's a scoped package
-        let packageName = packageJson.name || path.basename(dir);
-        
-        return {
-          name: packageName,
-          version: packageJson.version || 'unknown',
-          path: dir,
-          relativePath: relativePath
-        };
-      } catch (err) {
-        // Continue searching up
-      }
-    }
-    
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  
-  return null;
-}
-
-/**
  * Recursively scan a directory for binary files
+ * @param {string} dir - Directory to scan
+ * @param {string} rootDir - Root package directory
+ * @param {object[]} results - Array to store results
+ * @param {object} ecosystem - Ecosystem configuration
+ * @param {Set} visited - Set of visited directories (for symlink handling)
  */
-function scanDirectory(dir, nodeModulesRoot, results, visited = new Set()) {
+function scanDirectory(dir, rootDir, results, ecosystem, visited = new Set()) {
   // Resolve real path to handle symlinks and avoid infinite loops
   let realDir;
   try {
@@ -251,7 +241,9 @@ function scanDirectory(dir, nodeModulesRoot, results, visited = new Set()) {
       if (entry.isDirectory()) {
         // Skip certain directories for speed
         if (SKIP_DIRS.has(entry.name)) continue;
-        scanDirectory(fullPath, nodeModulesRoot, results, visited);
+        // Skip dist-info and egg-info directories (Python metadata)
+        if (entry.name.endsWith('.dist-info') || entry.name.endsWith('.egg-info')) continue;
+        scanDirectory(fullPath, rootDir, results, ecosystem, visited);
       } else if (entry.isFile()) {
         scannedFiles++;
         
@@ -291,14 +283,15 @@ function scanDirectory(dir, nodeModulesRoot, results, visited = new Set()) {
         }
 
         if (detectedType) {
-          const packageInfo = findPackageInfo(fullPath, nodeModulesRoot);
-          const relativePath = path.relative(nodeModulesRoot, fullPath);
+          const packageInfo = ecosystem.findPackageInfo(fullPath, rootDir);
+          const relativePath = path.relative(rootDir, fullPath);
           
           results.push({
             file: relativePath,
             absolutePath: fullPath,
             type: detectedType,
             category: category,
+            ecosystem: ecosystem.name,
             package: packageInfo ? packageInfo.name : 'unknown',
             version: packageInfo ? packageInfo.version : 'unknown',
             packagePath: packageInfo ? packageInfo.relativePath : 'unknown'
@@ -365,7 +358,7 @@ function uploadFile(apiUrl, apiKey, filePath, filename, tags) {
     // Notes field
     preFileData += `--${boundary}\r\n` +
       `Content-Disposition: form-data; name="notes"\r\n\r\n` +
-      `Binary from npm package, scanned on ${new Date().toISOString()}\r\n`;
+      `Binary from package scan, scanned on ${new Date().toISOString()}\r\n`;
     
     // Password field (empty)
     preFileData += `--${boundary}\r\n` +
@@ -521,6 +514,7 @@ async function getReputationsForExisting(existingFiles, apiUrl, apiKey) {
           sha256: file.sha256,
           package: file.package,
           version: file.version,
+          ecosystem: file.ecosystem,
           reputation: rep
         });
       } catch (err) {
@@ -529,6 +523,7 @@ async function getReputationsForExisting(existingFiles, apiUrl, apiKey) {
           sha256: file.sha256,
           package: file.package,
           version: file.version,
+          ecosystem: file.ecosystem,
           error: err.message
         });
       }
@@ -582,9 +577,12 @@ async function syncTagsForExisting(existingFiles, apiUrl, apiKey, repo) {
       const file = existingFiles[i];
       process.stdout.write(`\r  [${i + 1}/${existingFiles.length}] Checking tags for ${file.file.substring(0, 40)}...`);
       
+      // Get ecosystem config for tag prefix
+      const ecosystem = getEcosystem(file.ecosystem) || getEcosystem('generic');
+      
       // Build expected tags
       const expectedTags = [];
-      expectedTags.push(`SW_npm/${file.package}_${file.version}`.replace(/\s+/g, '_'));
+      expectedTags.push(`${ecosystem.tagPrefix}/${file.package}_${file.version}`.replace(/\s+/g, '_'));
       if (repo) {
         expectedTags.push(`REPO_${repo}`.replace(/\s+/g, '_'));
       }
@@ -716,14 +714,17 @@ async function uploadBinaries(results, apiUrl, apiKey, repo, options = {}) {
   for (let i = 0; i < toUpload.length; i++) {
     const binary = toUpload[i];
     
-    // Build tags array: SW_npm/<package>_<version> and optionally REPO_<repo>
+    // Get ecosystem config for tag prefix
+    const ecosystem = getEcosystem(binary.ecosystem) || getEcosystem('generic');
+    
+    // Build tags array: SW_<pm>/<package>_<version> and optionally REPO_<repo>
     const tags = [];
-    tags.push(`SW_npm/${binary.package}_${binary.version}`.replace(/\s+/g, '_'));
+    tags.push(`${ecosystem.tagPrefix}/${binary.package}_${binary.version}`.replace(/\s+/g, '_'));
     if (repo) {
       tags.push(`REPO_${repo}`.replace(/\s+/g, '_'));
     }
     
-    // Filename is the path below node_modules (using forward slashes)
+    // Filename is the relative path (using forward slashes)
     const filename = binary.file.replace(/\\/g, '/');
     
     process.stdout.write(`[${i + 1}/${toUpload.length}] Uploading ${filename}... `);
@@ -937,27 +938,77 @@ function emitThreatAnnotations(reputations) {
 }
 
 /**
- * Main function to scan node_modules
+ * Main function to scan packages
+ * @param {string} targetDir - Directory to scan
+ * @param {object} options - Scan options
  */
-async function scanNodeModules(targetDir, options = {}) {
-  const nodeModulesPath = path.join(targetDir, 'node_modules');
+async function scanPackages(targetDir, options = {}) {
+  const {
+    ecosystems: requestedEcosystems = [],
+    autoDetect = true
+  } = options;
   
-  if (!fs.existsSync(nodeModulesPath)) {
-    console.error(`Error: node_modules not found at ${nodeModulesPath}`);
-    console.error('Please run this tool from a directory containing node_modules, or specify the path as an argument.');
+  // Determine which ecosystems to scan
+  let ecosystemsToScan = [];
+  
+  if (requestedEcosystems.length > 0) {
+    // Use explicitly requested ecosystems
+    ecosystemsToScan = requestedEcosystems.map(name => {
+      const eco = getEcosystem(name);
+      if (!eco) {
+        console.warn(`Warning: Unknown ecosystem '${name}', skipping`);
+        return null;
+      }
+      return eco;
+    }).filter(Boolean);
+  } else if (autoDetect) {
+    // Auto-detect ecosystems
+    const detected = detectEcosystems(targetDir);
+    if (detected.length > 0) {
+      ecosystemsToScan = detected.map(name => getEcosystem(name));
+      console.log(`\nAuto-detected ecosystems: ${detected.join(', ')}`);
+    } else {
+      console.log('\nNo known package ecosystems detected. Use --ecosystem to specify one.');
+      console.log(`Available ecosystems: ${getAvailableEcosystems().join(', ')}`);
+      process.exit(1);
+    }
+  }
+  
+  if (ecosystemsToScan.length === 0) {
+    console.error('Error: No ecosystems to scan');
     process.exit(1);
   }
-
-  console.log(`\nScanning: ${nodeModulesPath}`);
-  console.log(`Deep magic byte scan: ${deepMagicScan ? 'enabled' : 'disabled (use --deep for thorough scan)'}\n`);
-
-  const results = [];
+  
+  const allResults = [];
   const startTime = Date.now();
   
-  scanDirectory(nodeModulesPath, nodeModulesPath, results);
-  
-  // Clear progress line
-  process.stdout.write('\r' + ' '.repeat(80) + '\r');
+  // Scan each ecosystem
+  for (const ecosystem of ecosystemsToScan) {
+    const pkgDir = findEcosystemDirectory(targetDir, ecosystem.name);
+    
+    if (!pkgDir) {
+      console.log(`\nSkipping ${ecosystem.displayName}: directory not found`);
+      continue;
+    }
+    
+    console.log(`\n${'='.repeat(80)}`);
+    console.log(`SCANNING ${ecosystem.displayName.toUpperCase()}`);
+    console.log('='.repeat(80));
+    console.log(`Directory: ${pkgDir}`);
+    console.log(`Deep magic byte scan: ${deepMagicScan ? 'enabled' : 'disabled (use --deep for thorough scan)'}\n`);
+    
+    const results = [];
+    scannedDirs = 0;
+    scannedFiles = 0;
+    
+    scanDirectory(pkgDir, pkgDir, results, ecosystem);
+    
+    // Clear progress line
+    process.stdout.write('\r' + ' '.repeat(80) + '\r');
+    
+    console.log(`Found ${results.length} files in ${ecosystem.displayName}`);
+    allResults.push(...results);
+  }
   
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
 
@@ -968,10 +1019,11 @@ async function scanNodeModules(targetDir, options = {}) {
   let totalMetadata = 0;
   let totalOther = 0;
   
-  for (const result of results) {
-    const key = `${result.package}@${result.version}`;
+  for (const result of allResults) {
+    const key = `${result.ecosystem}:${result.package}@${result.version}`;
     if (!byPackage[key]) {
       byPackage[key] = {
+        ecosystem: result.ecosystem,
         package: result.package,
         version: result.version,
         files: []
@@ -998,14 +1050,17 @@ async function scanNodeModules(targetDir, options = {}) {
     }
   }
 
-  // Sort packages alphabetically
-  const sortedPackages = Object.values(byPackage).sort((a, b) => 
-    a.package.localeCompare(b.package)
-  );
+  // Sort packages by ecosystem then name
+  const sortedPackages = Object.values(byPackage).sort((a, b) => {
+    if (a.ecosystem !== b.ecosystem) {
+      return a.ecosystem.localeCompare(b.ecosystem);
+    }
+    return a.package.localeCompare(b.package);
+  });
 
   // Output results
-  console.log('='.repeat(80));
-  console.log('EXECUTABLES FOUND IN NODE_MODULES');
+  console.log('\n' + '='.repeat(80));
+  console.log('EXECUTABLES FOUND');
   console.log('='.repeat(80));
   console.log();
 
@@ -1013,10 +1068,18 @@ async function scanNodeModules(targetDir, options = {}) {
     console.log('No executable files found.');
   } else {
     let totalFiles = 0;
+    let currentEcosystem = null;
     
     for (const pkg of sortedPackages) {
+      // Print ecosystem header when it changes
+      if (pkg.ecosystem !== currentEcosystem) {
+        currentEcosystem = pkg.ecosystem;
+        const eco = getEcosystem(currentEcosystem);
+        console.log(`\n\x1b[35m▶ ${eco ? eco.displayName : currentEcosystem}\x1b[0m`);
+        console.log('-'.repeat(60));
+      }
+      
       console.log(`\x1b[36m📦 ${pkg.package}\x1b[0m @ \x1b[33m${pkg.version}\x1b[0m`);
-      console.log('-'.repeat(60));
       
       for (const file of pkg.files) {
         let categoryIcon, typeColor;
@@ -1040,38 +1103,35 @@ async function scanNodeModules(targetDir, options = {}) {
         console.log(`   ${categoryIcon} [${typeColor}${file.type.padEnd(8)}\x1b[0m] ${file.file}`);
         totalFiles++;
       }
-      console.log();
     }
 
-    console.log('='.repeat(80));
+    console.log('\n' + '='.repeat(80));
     console.log('SUMMARY');
     console.log('='.repeat(80));
+    console.log(`Ecosystems scanned: ${ecosystemsToScan.map(e => e.displayName).join(', ')}`);
     console.log(`Total packages with files: ${sortedPackages.length}`);
     console.log(`Total files found: ${totalFiles}`);
     console.log(`  - Binary files: ${totalBinaries}`);
     console.log(`  - Script files: ${totalScripts}`);
     if (totalMetadata > 0) console.log(`  - Metadata files: ${totalMetadata}`);
     if (totalOther > 0) console.log(`  - Other files: ${totalOther}`);
-    console.log(`Directories scanned: ${scannedDirs}`);
-    console.log(`Files checked: ${scannedFiles}`);
     console.log(`Scan completed in: ${elapsed}s`);
   }
 
   // Also output JSON for programmatic use
   const jsonOutput = {
-    scanPath: nodeModulesPath,
+    scanPath: targetDir,
     scanDate: new Date().toISOString(),
     deepScan: deepMagicScan,
     includePackageJson: includePackageJson,
     includeAllFiles: includeAllFiles,
+    ecosystems: ecosystemsToScan.map(e => e.name),
     totalPackages: sortedPackages.length,
-    totalFiles: results.length,
+    totalFiles: allResults.length,
     totalBinaries: totalBinaries,
     totalScripts: totalScripts,
     totalMetadata: totalMetadata,
     totalOther: totalOther,
-    directoriesScanned: scannedDirs,
-    filesChecked: scannedFiles,
     packages: sortedPackages
   };
 
@@ -1080,7 +1140,7 @@ async function scanNodeModules(targetDir, options = {}) {
   console.log(`\nDetailed results saved to: ${jsonOutputPath}`);
 
   // Upload if requested
-  if (options.upload && results.length > 0) {
+  if (options.upload && allResults.length > 0) {
     if (!options.apiKey) {
       console.error('\nError: API key required for upload. Use --api-key or set UC_API_KEY environment variable.');
       process.exit(1);
@@ -1090,7 +1150,7 @@ async function scanNodeModules(targetDir, options = {}) {
       process.exit(1);
     }
     
-    const uploadResults = await uploadBinaries(results, options.apiUrl, options.apiKey, options.repo, {
+    const uploadResults = await uploadBinaries(allResults, options.apiUrl, options.apiKey, options.repo, {
       skipExisting: options.skipExisting,
       getReputations: options.getReputations
     });
@@ -1103,12 +1163,19 @@ async function scanNodeModules(targetDir, options = {}) {
   return jsonOutput;
 }
 
+// Legacy function for backwards compatibility
+async function scanNodeModules(targetDir, options = {}) {
+  return scanPackages(targetDir, { ...options, ecosystems: ['npm'] });
+}
+
 /**
  * Parse command line arguments
  */
 function parseArgs(args) {
   const options = {
     targetDir: process.cwd(),
+    ecosystems: [],
+    autoDetect: true,
     deep: false,
     upload: false,
     skipExisting: true,
@@ -1126,6 +1193,20 @@ function parseArgs(args) {
     if (arg === '--help' || arg === '-h') {
       printHelp();
       process.exit(0);
+    } else if (arg === '--list-ecosystems') {
+      console.log('\nAvailable ecosystems:');
+      for (const [name, config] of Object.entries(ECOSYSTEMS)) {
+        console.log(`  ${name.padEnd(10)} - ${config.description}`);
+        console.log(`             Directories: ${config.directories.join(', ')}`);
+        console.log(`             Tag prefix: ${config.tagPrefix}/`);
+      }
+      process.exit(0);
+    } else if (arg === '--ecosystem' || arg === '-e') {
+      const eco = args[++i];
+      if (eco) {
+        options.ecosystems.push(...eco.split(','));
+        options.autoDetect = false;
+      }
     } else if (arg === '--deep') {
       options.deep = true;
     } else if (arg === '--upload') {
@@ -1154,63 +1235,77 @@ function parseArgs(args) {
 
 function printHelp() {
   console.log(`
-NPM Binary Scanner
-==================
+Multi-Ecosystem Package Scanner
+===============================
 
-Scans npm packages (node_modules) for binary executables and executable scripts,
+Scans package directories for binary executables and executable scripts,
 then optionally uploads them to UnknownCyber API for security analysis.
+
+Supports: npm, pip, maven, cargo, go, ruby, and generic directory scans.
 
 Usage:
   node scanner.js [options] [path]
 
-Options:
-  --deep              Enable deep scan using magic bytes (slower but finds more)
-  --upload            Upload found files to UnknownCyber API
-  --force-upload      Upload all files even if they already exist in UC
-  --no-reputations    Skip fetching reputation data for existing files
+Ecosystem Options:
+  --ecosystem, -e <name>  Specify ecosystem(s) to scan (comma-separated)
+                          Available: npm, pip, maven, cargo, go, ruby, generic
+                          If not specified, auto-detects from directory structure
+  --list-ecosystems       List all available ecosystems and exit
+
+Scan Options:
+  --deep                  Enable deep scan using magic bytes (slower but finds more)
 
 File Selection:
   --include-package-json  Include package.json files (for SBOM creation)
-  --all-files             Include ALL files in node_modules (not just executables)
+  --all-files             Include ALL files (not just executables)
+
+Upload Options:
+  --upload                Upload found files to UnknownCyber API
+  --force-upload          Upload all files even if they already exist in UC
+  --no-reputations        Skip fetching reputation data for existing files
 
 API Configuration:
-  --api-url <url>     API base URL (or set UC_API_URL env var)
-  --api-key <key>     API key for authentication (or set UC_API_KEY env var)
-  --repo <name>       Repository name to tag uploads with (or set UC_REPO env var)
+  --api-url <url>         API base URL (or set UC_API_URL env var)
+  --api-key <key>         API key for authentication (or set UC_API_KEY env var)
+  --repo <name>           Repository name to tag uploads with (or set UC_REPO env var)
 
 General:
-  --help, -h          Show this help message
+  --help, -h              Show this help message
 
 Examples:
-  # Scan current directory
+  # Auto-detect and scan all ecosystems in current directory
   node scanner.js
   
-  # Scan specific directory  
+  # Scan specific ecosystem
+  node scanner.js --ecosystem npm
+  node scanner.js -e pip ./my-python-project
+  
+  # Scan multiple ecosystems
+  node scanner.js --ecosystem npm,pip ./my-project
+  
+  # Scan npm packages (legacy behavior)
   node scanner.js ./my-project
   
-  # Deep scan with magic byte detection
-  node scanner.js --deep
+  # Deep scan with upload
+  node scanner.js --deep --upload --api-key YOUR_KEY
   
-  # Scan and upload to UnknownCyber (skips existing files by default)
-  node scanner.js --upload --api-url https://api.unknowncyber.com --api-key YOUR_KEY
-  
-  # Force upload all files (even if they exist)
-  node scanner.js --upload --force-upload --api-key YOUR_KEY
-  
-  # Scan and upload with repository tag
-  node scanner.js --upload --repo my-org/my-repo --api-key YOUR_KEY
-  
-  # Using environment variables
-  set UC_API_URL=https://api.unknowncyber.com
-  set UC_API_KEY=your-api-key
-  set UC_REPO=my-org/my-repo
-  node scanner.js --upload
+  # Scan extracted container filesystem
+  node scanner.js --ecosystem generic ./extracted-container
+
+Tag Format:
+  Files are tagged with: SW_<ecosystem>/<package>_<version>
+  Examples:
+    - SW_npm/@esbuild/win32-x64_0.20.2
+    - SW_pip/requests_2.31.0
+    - SW_maven/org.apache.commons:commons-lang3_3.12.0
+    - SW_cargo/serde_1.0.193
 
 Detected Binary Types:
   - Windows: EXE, DLL, SYS, OCX, COM, SCR
   - Linux: ELF executables, SO (shared objects), O, A
   - macOS: Mach-O, DYLIB, Bundle
   - Node.js: .node (native addons)
+  - Java: JAR, WAR, EAR, CLASS
   - WebAssembly: WASM
   - Other: BIN, DAT
 
@@ -1218,26 +1313,6 @@ Detected Script Types (potential attack vectors):
   - Windows: BAT, CMD, PS1, VBS, VBE, WSF, WSH
   - Unix: SH, BASH, ZSH, CSH, KSH
   - Cross-platform: PL (Perl), RB (Ruby), PY/PYW (Python)
-
-Upload Behavior:
-  By default, the scanner checks if files already exist in UnknownCyber by
-  computing SHA256 hashes and querying the API. Files that already exist are
-  skipped, and their reputation data is fetched and displayed.
-
-  - Files with HIGH or MEDIUM threat levels are highlighted in the output
-  - Use --force-upload to upload all files regardless of existence
-  - Use --no-reputations to skip fetching reputation data
-
-Upload Details:
-  When --upload is specified, each executable is uploaded with:
-  - Filename: Path relative to node_modules (e.g., "@esbuild/win32-x64/esbuild.exe")
-  - Tags: "SW_npm/<package>_<version>" (e.g., "SW_npm/@esbuild/win32-x64_0.20.2")
-          "REPO_<repo>" if --repo is specified (e.g., "REPO_my-org/my-repo")
-
-Output:
-  - Console output grouped by package (⚙️ for binaries, 📜 for scripts)
-  - JSON file (binary-scan-results.json) with detailed results, upload status,
-    and reputation data for existing files
 `);
 }
 
@@ -1249,4 +1324,4 @@ deepMagicScan = options.deep;
 includePackageJson = options.includePackageJson;
 includeAllFiles = options.includeAllFiles;
 
-scanNodeModules(options.targetDir, options);
+scanPackages(options.targetDir, options);
