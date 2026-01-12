@@ -1,12 +1,25 @@
-# NPM Package Scanner
+# Package Binary Scanner
 
 [![Test Action](https://github.com/Unknown-Cyber-Inc/npm-package-scanner/actions/workflows/test.yml/badge.svg)](https://github.com/Unknown-Cyber-Inc/npm-package-scanner/actions/workflows/test.yml)
 
-A GitHub Action and CLI tool that scans npm packages (`node_modules`) for security threats. It detects binary executables, scripts, and suspicious patterns, then uploads them to UnknownCyber for multi-layer threat analysis including AV scanning, genomic similarity, and SBOM tracking.
+A GitHub Action and CLI tool that scans package directories for security threats. It **auto-detects** installed packages from multiple ecosystems (npm, pip, Maven, Cargo, Go, Ruby), finds binary executables and scripts, then uploads them to UnknownCyber for multi-layer threat analysis including AV scanning, genomic similarity, and SBOM tracking.
 
-## Why Scan NPM Packages?
+## Supported Ecosystems
 
-NPM packages can include pre-compiled native binaries and executable scripts. While often legitimate (e.g., `esbuild`, `sharp`), these pose unique security risks:
+| Ecosystem | Package Directory | Metadata Source | Tag Format |
+|-----------|------------------|-----------------|------------|
+| **npm** | `node_modules/` | `package.json` | `SW_npm/pkg_version` |
+| **pip** | `site-packages/` | `*.dist-info/METADATA` | `SW_pip/pkg_version` |
+| **Maven** | `.m2/repository/`, `lib/` | `pom.xml` or path | `SW_maven/group:artifact_version` |
+| **Cargo** | `target/release/` | `Cargo.toml` | `SW_cargo/pkg_version` |
+| **Go** | `vendor/`, `pkg/mod/` | `go.mod` | `SW_go/module_version` |
+| **Ruby** | `vendor/bundle/` | `*.gemspec` | `SW_ruby/gem_version` |
+
+The scanner **automatically detects** which ecosystems are present after your build/install step—no configuration required.
+
+## Why Scan Package Binaries?
+
+Packages can include pre-compiled native binaries and executable scripts. While often legitimate (e.g., `esbuild`, `sharp`, `numpy`), these pose unique security risks:
 
 | Risk | Description |
 |------|-------------|
@@ -106,14 +119,15 @@ Beyond security scanning, uploading to UnknownCyber builds a **centralized inven
 ## Features
 
 - 🔍 **Comprehensive Detection**: Identifies binaries by file extension and magic bytes
-- 📦 **Package Attribution**: Associates each binary with its parent npm package and version
+- 🌐 **Multi-Ecosystem Support**: Auto-detects npm, pip, Maven, Cargo, Go, and Ruby packages
+- 📦 **Package Attribution**: Associates each binary with its parent package and version
 - 🔄 **Handles Nested Dependencies**: Scans all direct and transitive dependencies  
 - ☁️ **UnknownCyber Integration**: Upload binaries for multi-layer threat analysis
 - 🔒 **Smart Deduplication**: Skips files already analyzed to save time and bandwidth
-- 🏷️ **Automatic Tagging**: Tags files with package manager, package name, version, and repository
+- 🏷️ **Automatic Tagging**: Tags files with `SW_<ecosystem>/<package>_<version>` and repository
 - ⚠️ **Pipeline Integration**: Blocks CI/CD on high-severity threats with detailed annotations
 - 📊 **Detailed Reports**: JSON output with full scan results and threat assessments
-- 🚀 **GitHub Action & CLI**: Flexible integoptions
+- 🚀 **GitHub Action & CLI**: Flexible integration options
 
 ## Quick Start
 
@@ -122,7 +136,7 @@ Beyond security scanning, uploading to UnknownCyber builds a **centralized inven
 Add this to your workflow (`.github/workflows/scan-binaries.yml`):
 
 ```yaml
-name: Scan NPM Binaries
+name: Scan Package Binaries
 
 on:
   push:
@@ -135,18 +149,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      # Install your dependencies (npm, pip, etc.)
+      - run: npm ci          # or: pip install -r requirements.txt
       
-      - run: npm ci
-      
+      # Scanner auto-detects which ecosystems are installed
       - name: Scan binaries
         uses: Unknown-Cyber-Inc/npm-package-scanner@v1
         with:
           upload: 'true'
           api-key: ${{ secrets.UC_API_KEY }}
 ```
+
+The scanner automatically detects installed package ecosystems—no configuration needed.
 
 ### As a CLI Tool
 
@@ -166,7 +180,8 @@ node scanner.js --upload --api-key YOUR_API_KEY
 
 | Input | Description | Required | Default |
 |-------|-------------|----------|---------|
-| `scan-path` | Path to directory containing node_modules | No | `.` |
+| `scan-path` | Path to directory to scan | No | `.` |
+| `ecosystems` | Ecosystems to scan (comma-separated: `npm,pip,maven,cargo,go,ruby`) | No | Auto-detect |
 | `deep-scan` | Enable magic bytes detection (slower) | No | `false` |
 | `upload` | Upload files to UnknownCyber | No | `false` |
 | `skip-existing` | Skip files already in UnknownCyber | No | `true` |
@@ -181,7 +196,7 @@ node scanner.js --upload --api-key YOUR_API_KEY
 | `yara-include` | File patterns for YARA (e.g., `*.js,*.html`) | No | `''` |
 | `generate-summary` | Generate summary report with links to UC reports | No | `false` |
 | `fail-on-threats` | Fail if HIGH/MEDIUM threats or high-severity YARA matches found | No | `false` |
-| `license-check` | Enable license compliance checking | No | `false` |
+| `license-check` | Enable license compliance checking (npm only) | No | `false` |
 | `license-policy` | Policy file or preset (`permissive`, `strict`, `copyleft-ok`) | No | `permissive` |
 | `fail-on-license` | Fail if denied licenses are found | No | `false` |
 

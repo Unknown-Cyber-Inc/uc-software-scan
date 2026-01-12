@@ -1,5 +1,5 @@
 name: 'Package Binary Scanner'
-description: 'Scans package directories for binary executables and optionally uploads them to UnknownCyber for analysis. Supports npm, pip, maven, cargo, go, and ruby ecosystems.'
+description: 'Scans package directories for binary executables and optionally uploads them to UnknownCyber for analysis. Auto-detects npm, pip, maven, cargo, go, and ruby ecosystems from installed packages.'
 author: 'UnknownCyber'
 
 branding:
@@ -12,7 +12,7 @@ inputs:
     required: false
     default: '.'
   ecosystems:
-    description: 'Comma-separated list of ecosystems to scan (npm, pip, maven, cargo, go, ruby, generic). If empty, auto-detects.'
+    description: 'Comma-separated list of ecosystems to scan (npm, pip, maven, cargo, go, ruby, generic). Default: auto-detect from installed packages.'
     required: false
     default: ''
   deep-scan:
