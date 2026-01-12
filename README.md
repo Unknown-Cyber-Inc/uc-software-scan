@@ -15,14 +15,7 @@ NPM packages can include pre-compiled native binaries and executable scripts. Wh
 | **License Compliance** | Native binaries may carry different licensing terms than the JavaScript wrapper |
 | **Vulnerability Gaps** | Memory-unsafe languages (C/C++) can have vulnerabilities not caught by JS tooling |
 | **Post-Install Scripts** | Scripts in `preinstall`/`postinstall` hooks can execute malware |
-
-### Dependency Inventory & SBOM Compliance
-
-Beyond security scanning, uploading to UnknownCyber builds a **centralized inventory** of all third-party packages across your organization's repositories. Each file is tagged with package name, version, and source repository—giving you a single source of truth for dependency tracking. This helps organizations:
-
-- **Know what's deployed** — See all third-party components across projects
-- **Track versions** — Monitor which versions are in use, including in released software
-- **Meet SBOM regulations** — Comply with requirements like Executive Order 14028, NTIA guidelines, and customer audits
+| **Regulatory Compliance** | SBOM requirements (EO 14028, NTIA) demand visibility into all software components |
 
 ## Security Analysis
 
@@ -71,6 +64,14 @@ Validates digital signatures on executables to establish trust:
 | ❓ **Unsigned** | No signature (common for open-source tools) |
 
 Invalid signatures are strong indicators of tampering and warrant immediate investigation.
+
+### 📦 Dependency Inventory & SBOM Compliance
+
+Beyond security scanning, uploading to UnknownCyber builds a **centralized inventory** of all third-party packages across your organization's repositories. Each file is tagged with package name, version, and source repository—giving you a single source of truth for dependency tracking. This helps organizations:
+
+- **Know what's deployed** — See all third-party components across projects
+- **Track versions** — Monitor which versions are in use, including in released software
+- **Meet SBOM regulations** — Comply with requirements like Executive Order 14028, NTIA guidelines, and customer audits
 
 ### 🔮 Coming Soon
 
