@@ -648,6 +648,67 @@ Many popular npm packages include native binaries:
 - Python 3.8+ with `yara-python` (for YARA scanning, optional)
 - No other external dependencies
 
+## Creating a Demo Repository
+
+A script is included to create a demo repository showing the scanner's capabilities with evolving package versions over time.
+
+### Usage
+
+```bash
+# Create demo with default settings
+node create-demo.js ../my-scanner-demo
+
+# Specify custom repository name
+node create-demo.js ../my-scanner-demo --repo-name=my-scanner-demo
+
+# Specify GitHub organization
+node create-demo.js ../my-scanner-demo --repo-name=my-demo --org=MyOrg
+```
+
+### What It Creates
+
+The script generates a repository with **6 versioned releases** (v1.0.0 through v2.0.0), each with backdated commits simulating package evolution:
+
+| Version | Date | Packages Added |
+|---------|------|----------------|
+| v1.0.0 | Jan 15, 2025 | esbuild, lodash, source-map |
+| v1.1.0 | Mar 1, 2025 | + rollup |
+| v1.2.0 | May 1, 2025 | + @swc/core, eslint-config-prettier |
+| v1.3.0 | Jul 1, 2025 | + @sentry/cli |
+| v1.4.0 | Sep 1, 2025 | + minimist (vulnerable version) |
+| v2.0.0 | Nov 15, 2025 | Updated to latest versions |
+
+### Features Demonstrated
+
+- **All-files upload**: Every file in `node_modules` is uploaded to UnknownCyber
+- **YARA scanning**: Scans JS and EXE files for malicious patterns
+- **Detailed summaries**: GitHub Actions annotations showing threats
+- **Pipeline blocking**: Fails on high-severity detections
+- **Malware detection**: Optionally downloads real malware samples (Shai Hulud) to demonstrate YARA detection
+
+### Malware Demo
+
+To demonstrate catching real malware, push a commit with "infected" in the message:
+
+```bash
+git commit --allow-empty -m "Test infected package detection"
+git push
+```
+
+This triggers download of known malware samples to a fake `lodash_infected` package, which the YARA scanner will detect and block.
+
+### Setup Steps
+
+1. Create the demo: `node create-demo.js ../my-demo --repo-name=my-demo`
+2. Create a GitHub repository with the same name
+3. Add remote: `git remote add origin git@github.com:YourOrg/my-demo.git`
+4. Push incrementally (to trigger separate workflows):
+   ```bash
+   git reset --hard v1.0.0 && git push --force origin main && git push origin v1.0.0
+   # Wait for workflow, then repeat for each version
+   ```
+5. Add `UC_API_KEY` secret in GitHub repo settings
+
 ## License
 
 MIT
