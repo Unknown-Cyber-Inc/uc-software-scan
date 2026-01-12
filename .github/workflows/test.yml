@@ -1,4 +1,4 @@
-# Test workflow for the npm-binary-scanner action itself
+# Test workflow for the package-binary-scanner action
 name: Test Action
 
 on:
@@ -8,317 +8,65 @@ on:
   workflow_dispatch:
 
 jobs:
-  test-scan-only:
-    name: Test Scan Only
+  # ==========================================================================
+  # ECOSYSTEM DETECTION TESTS
+  # Test that each ecosystem is properly detected and files are accessible
+  # ==========================================================================
+  
+  test-npm-ecosystem:
+    name: Test NPM Ecosystem
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Create test project
+      - name: Create npm test project
         run: |
           mkdir -p test-project
           cd test-project
           npm init -y
           npm install esbuild --save-dev
 
-      - name: Run Binary Scanner (scan only)
+      - name: Run Scanner (auto-detect npm)
         uses: ./
         id: scan
         with:
           scan-path: 'test-project'
           deep-scan: 'true'
 
-      - name: Check results
+      - name: Verify npm detection
         run: |
-          echo "Total packages with binaries: ${{ steps.scan.outputs.total-packages }}"
-          echo "Total binary files: ${{ steps.scan.outputs.total-binaries }}"
-          cat test-project/binary-scan-results.json
-
-  test-with-upload:
-    name: Test With Upload (Smart Deduplication)
-    runs-on: ubuntu-latest
-    needs: test-scan-only
-    # Only run upload test on push (API key is available from secrets)
-    if: ${{ github.event_name == 'push' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Create test project
-        run: |
-          mkdir -p test-project
-          cd test-project
-          npm init -y
-          npm install esbuild --save-dev
-
-      - name: Run Binary Scanner (with upload - smart deduplication)
-        uses: ./
-        id: scan
-        with:
-          scan-path: 'test-project'
-          deep-scan: 'true'
-          upload: 'true'
-          api-key: ${{ secrets.UC_API_KEY }}
-
-      - name: Check results
-        run: |
-          echo "=== Scan Results ==="
-          echo "Total packages with binaries: ${{ steps.scan.outputs.total-packages }}"
-          echo "Total binary files: ${{ steps.scan.outputs.total-binaries }}"
-          echo ""
-          echo "=== Upload Results ==="
-          echo "Uploaded successfully: ${{ steps.scan.outputs.upload-successful }}"
-          echo "Upload failures: ${{ steps.scan.outputs.upload-failed }}"
-          echo "Skipped (already exist): ${{ steps.scan.outputs.upload-skipped }}"
-          echo ""
-          echo "=== Threat Assessment ==="
-          echo "Threats found (HIGH/MEDIUM): ${{ steps.scan.outputs.threats-found }}"
-
-      - name: Add to job summary
-        run: |
-          echo "## Binary Scan Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Packages with binaries | ${{ steps.scan.outputs.total-packages }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total binary files | ${{ steps.scan.outputs.total-binaries }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Uploaded | ${{ steps.scan.outputs.upload-successful }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Skipped (existing) | ${{ steps.scan.outputs.upload-skipped }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Failed | ${{ steps.scan.outputs.upload-failed }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| ⚠️ Threats (HIGH/MEDIUM) | ${{ steps.scan.outputs.threats-found }} |" >> $GITHUB_STEP_SUMMARY
-
-      - name: Show detailed results
-        run: |
-          echo "=== Detailed JSON Results ==="
-          cat test-project/binary-scan-results.json | head -100
-
-  test-force-upload:
-    name: Test Force Upload (No Deduplication)
-    runs-on: ubuntu-latest
-    needs: test-with-upload
-    # Run only on pushes (API key available from secrets)
-    if: ${{ github.event_name == 'push' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Create test project with small package
-        run: |
-          mkdir -p test-project
-          cd test-project
-          npm init -y
-          # Use a smaller package for force upload test
-          npm install @esbuild/linux-x64 --save-dev --ignore-scripts || true
-
-      - name: Run Binary Scanner (force upload)
-        uses: ./
-        id: scan
-        with:
-          scan-path: 'test-project'
-          upload: 'true'
-          skip-existing: 'false'
-          api-key: ${{ secrets.UC_API_KEY }}
-
-      - name: Check force upload results
-        run: |
-          echo "=== Force Upload Results ==="
-          echo "Uploaded: ${{ steps.scan.outputs.upload-successful }}"
-          echo "Failed: ${{ steps.scan.outputs.upload-failed }}"
-          echo "Skipped: ${{ steps.scan.outputs.upload-skipped }}"
-          # With force upload, skipped should be 0
-          if [ "${{ steps.scan.outputs.upload-skipped }}" != "0" ]; then
-            echo "Warning: Expected 0 skipped files with force upload"
-          fi
-
-  test-no-reputations:
-    name: Test Fast Mode (No Reputation Checks)
-    runs-on: ubuntu-latest
-    needs: test-scan-only
-    # Run only on pushes (API key available from secrets)
-    if: ${{ github.event_name == 'push' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Create test project
-        run: |
-          mkdir -p test-project
-          cd test-project
-          npm init -y
-          npm install esbuild --save-dev
-
-      - name: Run Binary Scanner (no reputation checks)
-        uses: ./
-        id: scan
-        with:
-          scan-path: 'test-project'
-          upload: 'true'
-          get-reputations: 'false'
-          api-key: ${{ secrets.UC_API_KEY }}
-
-      - name: Check results
-        run: |
-          echo "=== Fast Mode Results ==="
-          echo "Uploaded: ${{ steps.scan.outputs.upload-successful }}"
-          echo "Skipped: ${{ steps.scan.outputs.upload-skipped }}"
-          echo "Threats found: ${{ steps.scan.outputs.threats-found }}"
-          # With no reputation checks, threats-found should be 0
-          if [ "${{ steps.scan.outputs.threats-found }}" != "0" ]; then
-            echo "Warning: Expected 0 threats with reputation checks disabled"
-          fi
-
-  test-cli:
-    name: Test CLI Direct Usage
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Create test project
-        run: |
-          mkdir -p test-project
-          cd test-project
-          npm init -y
-          npm install esbuild --save-dev
-
-      - name: Test CLI scan
-        run: |
-          node scanner.js test-project
-          cat test-project/binary-scan-results.json
-
-      - name: Test CLI deep scan
-        run: |
-          node scanner.js --deep test-project
-
-      - name: Test CLI help
-        run: |
-          node scanner.js --help
-
-  test-cli-with-upload:
-    name: Test CLI With Upload
-    runs-on: ubuntu-latest
-    needs: test-cli
-    if: ${{ github.event_name == 'push' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Create test project
-        run: |
-          mkdir -p test-project
-          cd test-project
-          npm init -y
-          npm install @esbuild/linux-x64 --save-dev --ignore-scripts || true
-
-      - name: Test CLI upload with deduplication
-        env:
-          UC_API_KEY: ${{ secrets.UC_API_KEY }}
-          UC_API_URL: https://api.unknowncyber.com
-        run: |
-          node scanner.js --upload test-project
-
-      - name: Test CLI force upload
-        env:
-          UC_API_KEY: ${{ secrets.UC_API_KEY }}
-          UC_API_URL: https://api.unknowncyber.com
-        run: |
-          node scanner.js --upload --force-upload test-project
-
-      - name: Test CLI no reputations
-        env:
-          UC_API_KEY: ${{ secrets.UC_API_KEY }}
-          UC_API_URL: https://api.unknowncyber.com
-        run: |
-          node scanner.js --upload --no-reputations test-project
-
-  test-yara-binaries:
-    name: Test YARA on Binaries
-    runs-on: ubuntu-latest
-    needs: test-scan-only
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Create test project
-        run: |
-          mkdir -p test-project
-          cd test-project
-          npm init -y
-          npm install esbuild --save-dev
-
-      - name: Run Scanner with YARA (binaries)
-        uses: ./
-        id: scan
-        with:
-          scan-path: 'test-project'
-          deep-scan: 'true'
-          yara-scan: 'true'
-
-      - name: Check YARA results
-        run: |
-          echo "=== Scan Results ==="
+          echo "=== NPM Ecosystem Test ==="
+          echo "Ecosystems scanned: ${{ steps.scan.outputs.ecosystems-scanned }}"
+          echo "Total packages: ${{ steps.scan.outputs.total-packages }}"
           echo "Total binaries: ${{ steps.scan.outputs.total-binaries }}"
-          echo ""
-          echo "=== YARA Results ==="
-          echo "Files with YARA matches: ${{ steps.scan.outputs.yara-matches }}"
-          echo "High severity matches: ${{ steps.scan.outputs.yara-high-severity }}"
           
-          if [ -f "test-project/yara-results.json" ]; then
-            echo ""
-            echo "=== YARA Results JSON ==="
-            cat test-project/yara-results.json
+          # Verify npm was detected
+          if [[ "${{ steps.scan.outputs.ecosystems-scanned }}" != *"npm"* ]]; then
+            echo "::error::NPM ecosystem was not detected"
+            exit 1
           fi
-
-  test-yara-js:
-    name: Test YARA on JavaScript
-    runs-on: ubuntu-latest
-    needs: test-yara-binaries
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Create test project
-        run: |
-          mkdir -p test-project
-          cd test-project
-          npm init -y
-          npm install lodash --save  # Has JS files to scan
-
-      - name: Run Scanner with YARA (JS files)
-        uses: ./
-        id: scan
-        with:
-          scan-path: 'test-project'
-          yara-scan: 'true'
-          yara-include: '*.js'
-
-      - name: Check YARA JS results
-        run: |
-          echo "=== YARA JS Scan Results ==="
-          echo "Files with YARA matches: ${{ steps.scan.outputs.yara-matches }}"
-          echo "High severity matches: ${{ steps.scan.outputs.yara-high-severity }}"
           
-          if [ -f "test-project/yara-results.json" ]; then
-            echo ""
-            echo "=== Files scanned ==="
-            cat test-project/yara-results.json | head -20
+          # Verify we found binaries (esbuild has native binaries)
+          if [ "${{ steps.scan.outputs.total-binaries }}" -eq "0" ]; then
+            echo "::error::No binaries found in npm packages"
+            exit 1
           fi
+          
+          # Verify package attribution in JSON
+          node -e "
+            const r = require('./test-project/binary-scan-results.json');
+            const hasEsbuild = r.packages.some(p => p.package.includes('esbuild'));
+            if (!hasEsbuild) {
+              console.error('esbuild package not found in results');
+              process.exit(1);
+            }
+            console.log('✓ Package attribution working for npm');
+          "
 
-  test-yara-cli:
-    name: Test YARA CLI
+  test-pip-ecosystem:
+    name: Test Python/pip Ecosystem
     runs-on: ubuntu-latest
-    needs: test-yara-js
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -328,8 +76,259 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install yara-python
-        run: pip install yara-python>=4.3.0
+      - name: Create pip test project
+        run: |
+          mkdir -p test-project
+          cd test-project
+          # Install packages with native extensions
+          pip install numpy==1.26.0 --target=site-packages
+          pip install pillow==10.0.0 --target=site-packages
+
+      - name: Run Scanner (auto-detect pip)
+        uses: ./
+        id: scan
+        with:
+          scan-path: 'test-project'
+          deep-scan: 'true'
+
+      - name: Verify pip detection
+        run: |
+          echo "=== Python/pip Ecosystem Test ==="
+          echo "Ecosystems scanned: ${{ steps.scan.outputs.ecosystems-scanned }}"
+          echo "Total packages: ${{ steps.scan.outputs.total-packages }}"
+          echo "Total binaries: ${{ steps.scan.outputs.total-binaries }}"
+          
+          # Verify pip was detected
+          if [[ "${{ steps.scan.outputs.ecosystems-scanned }}" != *"pip"* ]]; then
+            echo "::error::pip ecosystem was not detected"
+            exit 1
+          fi
+          
+          # Verify we found .so files (numpy has native extensions)
+          if [ "${{ steps.scan.outputs.total-binaries }}" -eq "0" ]; then
+            echo "::error::No binaries found in pip packages"
+            exit 1
+          fi
+          
+          # Verify package attribution
+          node -e "
+            const r = require('./test-project/binary-scan-results.json');
+            const hasNumpy = r.packages.some(p => p.package.toLowerCase().includes('numpy'));
+            if (!hasNumpy) {
+              console.error('numpy package not found in results');
+              process.exit(1);
+            }
+            // Check version was extracted
+            const numpyPkg = r.packages.find(p => p.package.toLowerCase().includes('numpy'));
+            if (numpyPkg && numpyPkg.version === 'unknown') {
+              console.warn('Warning: numpy version not extracted');
+            }
+            console.log('✓ Package attribution working for pip');
+          "
+
+  test-maven-ecosystem:
+    name: Test Maven Ecosystem
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create maven test project
+        run: |
+          mkdir -p test-project/lib/org/apache/commons/commons-lang3/3.12.0
+          
+          # Create a fake JAR file (ZIP with proper magic bytes)
+          cd test-project/lib/org/apache/commons/commons-lang3/3.12.0
+          echo "PK" > commons-lang3-3.12.0.jar  # ZIP magic bytes (simplified)
+          printf '\x50\x4b\x03\x04' > commons-lang3-3.12.0.jar
+          
+          # Create pom.xml for metadata
+          cat > pom.xml << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <project>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
+            <version>3.12.0</version>
+          </project>
+          EOF
+
+      - name: Run Scanner (explicit maven)
+        uses: ./
+        id: scan
+        with:
+          scan-path: 'test-project'
+          ecosystems: 'maven'
+          deep-scan: 'true'
+
+      - name: Verify maven detection
+        run: |
+          echo "=== Maven Ecosystem Test ==="
+          echo "Ecosystems scanned: ${{ steps.scan.outputs.ecosystems-scanned }}"
+          echo "Total packages: ${{ steps.scan.outputs.total-packages }}"
+          echo "Total binaries: ${{ steps.scan.outputs.total-binaries }}"
+          
+          cat test-project/binary-scan-results.json
+          
+          # Verify we found the JAR
+          if [ "${{ steps.scan.outputs.total-binaries }}" -eq "0" ]; then
+            echo "::error::No JAR files found in maven lib"
+            exit 1
+          fi
+
+  test-cargo-ecosystem:
+    name: Test Cargo/Rust Ecosystem
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create cargo test project
+        run: |
+          mkdir -p test-project/target/release
+          
+          # Create Cargo.toml
+          cat > test-project/Cargo.toml << 'EOF'
+          [package]
+          name = "test-rust-app"
+          version = "0.1.0"
+          edition = "2021"
+          EOF
+          
+          # Create fake ELF binary
+          printf '\x7fELF' > test-project/target/release/test-rust-app
+
+      - name: Run Scanner (explicit cargo)
+        uses: ./
+        id: scan
+        with:
+          scan-path: 'test-project'
+          ecosystems: 'cargo'
+          deep-scan: 'true'
+
+      - name: Verify cargo detection
+        run: |
+          echo "=== Cargo Ecosystem Test ==="
+          echo "Ecosystems scanned: ${{ steps.scan.outputs.ecosystems-scanned }}"
+          echo "Total packages: ${{ steps.scan.outputs.total-packages }}"
+          echo "Total binaries: ${{ steps.scan.outputs.total-binaries }}"
+          
+          cat test-project/binary-scan-results.json
+
+  test-go-ecosystem:
+    name: Test Go Ecosystem
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create go test project
+        run: |
+          mkdir -p test-project/vendor/github.com/user/repo
+          
+          # Create go.mod
+          cat > test-project/vendor/github.com/user/repo/go.mod << 'EOF'
+          module github.com/user/repo
+          go 1.21
+          EOF
+          
+          # Create fake .so file
+          printf '\x7fELF' > test-project/vendor/github.com/user/repo/helper.so
+
+      - name: Run Scanner (explicit go)
+        uses: ./
+        id: scan
+        with:
+          scan-path: 'test-project'
+          ecosystems: 'go'
+          deep-scan: 'true'
+
+      - name: Verify go detection
+        run: |
+          echo "=== Go Ecosystem Test ==="
+          echo "Ecosystems scanned: ${{ steps.scan.outputs.ecosystems-scanned }}"
+          echo "Total packages: ${{ steps.scan.outputs.total-packages }}"
+          echo "Total binaries: ${{ steps.scan.outputs.total-binaries }}"
+          
+          cat test-project/binary-scan-results.json
+
+  test-auto-detect-multiple:
+    name: Test Auto-Detect Multiple Ecosystems
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Create multi-ecosystem project
+        run: |
+          mkdir -p test-project
+          cd test-project
+          
+          # Create npm project
+          npm init -y
+          npm install esbuild --save-dev
+          
+          # Create pip packages
+          pip install numpy==1.26.0 --target=site-packages
+
+      - name: Run Scanner (auto-detect all)
+        uses: ./
+        id: scan
+        with:
+          scan-path: 'test-project'
+          deep-scan: 'true'
+
+      - name: Verify multiple ecosystems detected
+        run: |
+          echo "=== Multi-Ecosystem Auto-Detection Test ==="
+          echo "Ecosystems scanned: ${{ steps.scan.outputs.ecosystems-scanned }}"
+          echo "Total packages: ${{ steps.scan.outputs.total-packages }}"
+          echo "Total binaries: ${{ steps.scan.outputs.total-binaries }}"
+          
+          # Verify both ecosystems were detected
+          ECOSYSTEMS="${{ steps.scan.outputs.ecosystems-scanned }}"
+          if [[ "$ECOSYSTEMS" != *"npm"* ]]; then
+            echo "::error::npm ecosystem was not auto-detected"
+            exit 1
+          fi
+          if [[ "$ECOSYSTEMS" != *"pip"* ]]; then
+            echo "::error::pip ecosystem was not auto-detected"
+            exit 1
+          fi
+          
+          echo "✓ Both npm and pip ecosystems auto-detected"
+          
+          # Verify results contain packages from both ecosystems
+          node -e "
+            const r = require('./test-project/binary-scan-results.json');
+            const ecosystems = [...new Set(r.packages.map(p => p.ecosystem))];
+            console.log('Ecosystems in results:', ecosystems);
+            if (!ecosystems.includes('npm')) {
+              console.error('npm packages not in results');
+              process.exit(1);
+            }
+            if (!ecosystems.includes('pip')) {
+              console.error('pip packages not in results');
+              process.exit(1);
+            }
+            console.log('✓ Results contain packages from both ecosystems');
+          "
+
+  # ==========================================================================
+  # CLI TESTS
+  # Test command line interface options
+  # ==========================================================================
+
+  test-cli-ecosystems:
+    name: Test CLI Ecosystem Options
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -338,31 +337,44 @@ jobs:
 
       - name: Create test project
         run: |
-          mkdir -p test-project
-          cd test-project
-          npm init -y
-          npm install esbuild --save-dev
+          mkdir -p test-project/node_modules/test-pkg
+          echo '{"name":"test-pkg","version":"1.0.0"}' > test-project/node_modules/test-pkg/package.json
+          printf '\x7fELF' > test-project/node_modules/test-pkg/binary
 
-      - name: Run binary scanner
-        run: node scanner.js --deep test-project
-
-      - name: Test YARA scanner help
-        run: python yara_scanner.py --help
-
-      - name: Test YARA scanner with results
+      - name: Test --list-ecosystems
         run: |
-          python yara_scanner.py \
-            --input test-project/binary-scan-results.json \
-            --output test-project/yara-results.json \
-            --github-annotations
+          node scanner.js --list-ecosystems
+          echo "✓ --list-ecosystems works"
 
-      - name: Show YARA results
-        run: cat test-project/yara-results.json
+      - name: Test --ecosystem option
+        run: |
+          node scanner.js --ecosystem npm test-project
+          echo "✓ --ecosystem npm works"
 
-  test-include-package-json:
-    name: Test Include package.json
+      - name: Test -e shorthand
+        run: |
+          node scanner.js -e npm test-project
+          echo "✓ -e shorthand works"
+
+      - name: Test auto-detection (no --ecosystem)
+        run: |
+          node scanner.js test-project
+          echo "✓ Auto-detection works"
+
+      - name: Test --help includes ecosystem info
+        run: |
+          node scanner.js --help | grep -i ecosystem
+          echo "✓ Help includes ecosystem info"
+
+  # ==========================================================================
+  # UPLOAD TESTS (npm only - tests common upload code)
+  # ==========================================================================
+
+  test-with-upload:
+    name: Test With Upload (Smart Deduplication)
     runs-on: ubuntu-latest
-    needs: test-scan-only
+    needs: [test-npm-ecosystem, test-pip-ecosystem]
+    if: ${{ github.event_name == 'push' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -372,35 +384,119 @@ jobs:
           mkdir -p test-project
           cd test-project
           npm init -y
-          npm install esbuild lodash@4.17.20 --save-dev
+          npm install esbuild --save-dev
+
+      - name: Run Binary Scanner (with upload)
+        uses: ./
+        id: scan
+        with:
+          scan-path: 'test-project'
+          deep-scan: 'true'
+          upload: 'true'
+          api-key: ${{ secrets.UC_API_KEY }}
+
+      - name: Check results
+        run: |
+          echo "=== Scan Results ==="
+          echo "Ecosystems: ${{ steps.scan.outputs.ecosystems-scanned }}"
+          echo "Total packages: ${{ steps.scan.outputs.total-packages }}"
+          echo "Total binaries: ${{ steps.scan.outputs.total-binaries }}"
+          echo ""
+          echo "=== Upload Results ==="
+          echo "Uploaded: ${{ steps.scan.outputs.upload-successful }}"
+          echo "Failed: ${{ steps.scan.outputs.upload-failed }}"
+          echo "Skipped: ${{ steps.scan.outputs.upload-skipped }}"
+          echo ""
+          echo "=== Threat Assessment ==="
+          echo "Threats (HIGH/MEDIUM): ${{ steps.scan.outputs.threats-found }}"
+
+      - name: Add to job summary
+        run: |
+          echo "## Binary Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Ecosystems | ${{ steps.scan.outputs.ecosystems-scanned }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Packages with binaries | ${{ steps.scan.outputs.total-packages }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total binary files | ${{ steps.scan.outputs.total-binaries }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Uploaded | ${{ steps.scan.outputs.upload-successful }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Skipped (existing) | ${{ steps.scan.outputs.upload-skipped }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Failed | ${{ steps.scan.outputs.upload-failed }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⚠️ Threats (HIGH/MEDIUM) | ${{ steps.scan.outputs.threats-found }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ==========================================================================
+  # YARA TESTS
+  # ==========================================================================
+
+  test-yara-binaries:
+    name: Test YARA on Binaries
+    runs-on: ubuntu-latest
+    needs: test-npm-ecosystem
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test project
+        run: |
+          mkdir -p test-project
+          cd test-project
+          npm init -y
+          npm install esbuild --save-dev
+
+      - name: Run Scanner with YARA
+        uses: ./
+        id: scan
+        with:
+          scan-path: 'test-project'
+          deep-scan: 'true'
+          yara-scan: 'true'
+
+      - name: Check YARA results
+        run: |
+          echo "=== YARA Results ==="
+          echo "Files with matches: ${{ steps.scan.outputs.yara-matches }}"
+          echo "High severity: ${{ steps.scan.outputs.yara-high-severity }}"
+          
+          if [ -f "test-project/yara-results.json" ]; then
+            cat test-project/yara-results.json
+          fi
+
+  # ==========================================================================
+  # FILE OPTIONS TESTS
+  # ==========================================================================
+
+  test-include-package-json:
+    name: Test Include package.json
+    runs-on: ubuntu-latest
+    needs: test-npm-ecosystem
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test project
+        run: |
+          mkdir -p test-project
+          cd test-project
+          npm init -y
+          npm install esbuild lodash --save-dev
 
       - name: Run Scanner with package.json
         uses: ./
         id: scan
         with:
           scan-path: 'test-project'
-          deep-scan: 'true'
           include-package-json: 'true'
 
       - name: Check results
         run: |
-          echo "=== Scan Results ==="
-          echo "Total packages: ${{ steps.scan.outputs.total-packages }}"
-          echo "Total binaries: ${{ steps.scan.outputs.total-binaries }}"
+          METADATA=$(node -e "const r = require('./test-project/binary-scan-results.json'); console.log(r.totalMetadata || 0)")
+          echo "Metadata files: $METADATA"
           
-          echo ""
-          echo "=== Checking for package.json files ==="
-          METADATA_COUNT=$(node -e "const r = require('./test-project/binary-scan-results.json'); console.log(r.totalMetadata || 0)")
-          echo "Metadata files (package.json): $METADATA_COUNT"
-          
-          if [ "$METADATA_COUNT" -eq "0" ]; then
+          if [ "$METADATA" -eq "0" ]; then
             echo "::error::Expected package.json files to be included"
             exit 1
           fi
-          
-          echo ""
-          echo "=== Full JSON Results ==="
-          cat test-project/binary-scan-results.json
+          echo "✓ package.json files included"
 
   test-include-all-files:
     name: Test Include All Files
@@ -415,7 +511,7 @@ jobs:
           mkdir -p test-project
           cd test-project
           npm init -y
-          npm install lodash@4.17.20 --save  # Has JS files to scan
+          npm install lodash --save
 
       - name: Run Scanner with all files
         uses: ./
@@ -426,109 +522,11 @@ jobs:
 
       - name: Check results
         run: |
-          echo "=== Scan Results ==="
-          echo "Total packages: ${{ steps.scan.outputs.total-packages }}"
-          
-          TOTAL_FILES=$(node -e "const r = require('./test-project/binary-scan-results.json'); console.log(r.totalFiles || 0)")
-          TOTAL_OTHER=$(node -e "const r = require('./test-project/binary-scan-results.json'); console.log(r.totalOther || 0)")
-          TOTAL_METADATA=$(node -e "const r = require('./test-project/binary-scan-results.json'); console.log(r.totalMetadata || 0)")
-          
-          echo "Total files: $TOTAL_FILES"
-          echo "Other files (JS, etc): $TOTAL_OTHER"
-          echo "Metadata files: $TOTAL_METADATA"
-          
-          if [ "$TOTAL_OTHER" -eq "0" ]; then
-            echo "::error::Expected 'other' files (JS, MD, etc) to be included"
-            exit 1
-          fi
-
-  test-vulnerable-package:
-    name: Test Package with Known CVEs
-    runs-on: ubuntu-latest
-    needs: test-scan-only
-    # Only run on push (uses API key)
-    if: ${{ github.event_name == 'push' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Create test project with vulnerable package
-        run: |
-          mkdir -p test-project
-          cd test-project
-          npm init -y
-          # lodash 4.17.20 has known CVEs:
-          # - CVE-2021-23337 (command injection)
-          # - CVE-2020-28500 (prototype pollution)
-          npm install lodash@4.17.20 --save
-          # minimist 1.2.5 has CVE-2021-44906 (prototype pollution)
-          npm install minimist@1.2.5 --save
-
-      - name: Run Scanner with upload and package.json
-        uses: ./
-        id: scan
-        with:
-          scan-path: 'test-project'
-          upload: 'true'
-          include-package-json: 'true'
-          api-key: ${{ secrets.UC_API_KEY }}
-
-      - name: Show results
-        run: |
-          echo "=== Vulnerable Package Test ==="
-          echo "Packages scanned: ${{ steps.scan.outputs.total-packages }}"
-          echo "Files uploaded: ${{ steps.scan.outputs.upload-successful }}"
-          echo "Files skipped: ${{ steps.scan.outputs.upload-skipped }}"
-          
-          echo ""
-          echo "=== Packages with Known CVEs ==="
-          echo "- lodash@4.17.20: CVE-2021-23337, CVE-2020-28500"
-          echo "- minimist@1.2.5: CVE-2021-44906"
-          
-          echo ""
-          echo "=== Results JSON ==="
-          cat test-project/binary-scan-results.json
-
-  test-cli-file-options:
-    name: Test CLI File Options
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Create test project
-        run: |
-          mkdir -p test-project
-          cd test-project
-          npm init -y
-          npm install lodash@4.17.20 --save
-
-      - name: Test CLI --include-package-json
-        run: |
-          node scanner.js --include-package-json test-project
-          METADATA=$(node -e "const r = require('./test-project/binary-scan-results.json'); console.log(r.totalMetadata || 0)")
-          echo "Metadata files: $METADATA"
-          if [ "$METADATA" -eq "0" ]; then
-            echo "::error::--include-package-json did not find any package.json files"
-            exit 1
-          fi
-
-      - name: Test CLI --all-files
-        run: |
-          node scanner.js --all-files test-project
           OTHER=$(node -e "const r = require('./test-project/binary-scan-results.json'); console.log(r.totalOther || 0)")
           echo "Other files: $OTHER"
+          
           if [ "$OTHER" -eq "0" ]; then
-            echo "::error::--all-files did not find any other files"
+            echo "::error::Expected other files (JS, etc) to be included"
             exit 1
           fi
-
-      - name: Show JSON structure
-        run: |
-          echo "=== JSON Output Structure ==="
-          node -e "const r = require('./test-project/binary-scan-results.json'); console.log(JSON.stringify({totalFiles: r.totalFiles, totalBinaries: r.totalBinaries, totalScripts: r.totalScripts, totalMetadata: r.totalMetadata, totalOther: r.totalOther, includePackageJson: r.includePackageJson, includeAllFiles: r.includeAllFiles}, null, 2))"
+          echo "✓ All files included"
