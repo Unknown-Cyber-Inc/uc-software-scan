@@ -139,6 +139,38 @@ function generateYaraReport(yaraResults) {
   return output;
 }
 
+function generateCodeSigningReport(results) {
+  let output = '';
+  
+  output += '## ✍️ Code Signing Report\n\n';
+  
+  if (!results.uploadResults?.reputations) {
+    output += '✅ No violations found\n\n';
+    return output;
+  }
+  
+  const reps = results.uploadResults.reputations;
+  const unsignedFiles = reps.filter(r => {
+    const sig = r.reputation?.signature;
+    return sig && sig.threatLevel === 'caution';
+  });
+  
+  if (unsignedFiles.length === 0) {
+    output += '✅ No violations found\n\n';
+    return output;
+  }
+  
+  output += `| File | Status |\n`;
+  output += `|------|--------|\n`;
+  
+  unsignedFiles.forEach(r => {
+    output += `| ${makeLink(r.file, r.sha256)} | ⚠️ Unsigned |\n`;
+  });
+  
+  output += '\n';
+  return output;
+}
+
 function generateLicenseReport(licenseResults) {
   let output = '';
   
@@ -261,7 +293,12 @@ function main() {
   // 4. YARA Scan Report
   output += generateYaraReport(yaraResults);
   
-  // 5. License Compliance Report
+  // 5. Code Signing Report
+  if (binaryResults) {
+    output += generateCodeSigningReport(binaryResults);
+  }
+  
+  // 6. License Compliance Report
   output += generateLicenseReport(licenseResults);
   
   // Output
