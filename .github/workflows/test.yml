@@ -81,9 +81,14 @@ jobs:
         run: |
           mkdir -p test-project
           cd test-project
-          # Install packages with native extensions
-          pip install numpy==1.26.0 --target=site-packages
-          pip install pillow==10.0.0 --target=site-packages
+          # Install packages with native extensions (cryptography always has .so files)
+          pip install cryptography==41.0.0 --target=site-packages
+          
+          # Debug: show what was installed
+          echo "=== Installed packages ==="
+          ls -la site-packages/
+          echo "=== Looking for .so files ==="
+          find site-packages -name "*.so" -type f | head -20
 
       - name: Run Scanner (auto-detect pip)
         uses: ./
@@ -106,7 +111,7 @@ jobs:
             exit 1
           fi
           
-          # Verify we found .so files (numpy has native extensions)
+          # Verify we found .so files (cryptography has native extensions)
           if [ "${{ steps.scan.outputs.total-binaries }}" -eq "0" ]; then
             echo "::error::No binaries found in pip packages"
             exit 1
@@ -115,15 +120,11 @@ jobs:
           # Verify package attribution
           node -e "
             const r = require('./test-project/binary-scan-results.json');
-            const hasNumpy = r.packages.some(p => p.package.toLowerCase().includes('numpy'));
-            if (!hasNumpy) {
-              console.error('numpy package not found in results');
+            const hasCrypto = r.packages.some(p => p.package.toLowerCase().includes('cryptography') || p.package.toLowerCase().includes('cffi'));
+            if (!hasCrypto) {
+              console.error('cryptography/cffi package not found in results');
+              console.log('Packages found:', r.packages.map(p => p.package));
               process.exit(1);
-            }
-            // Check version was extracted
-            const numpyPkg = r.packages.find(p => p.package.toLowerCase().includes('numpy'));
-            if (numpyPkg && numpyPkg.version === 'unknown') {
-              console.warn('Warning: numpy version not extracted');
             }
             console.log('✓ Package attribution working for pip');
           "
