@@ -1,0 +1,37 @@
+Package: libssl1.1
+Status: install ok installed
+Priority: optional
+Section: libs
+Installed-Size: 4124
+Maintainer: Ubuntu Developers
+Architecture: amd64
+Multi-Arch: same
+Source: openssl
+Version: 1.1.1f-1ubuntu2.20
+Depends: libc6 (>= 2.25)
+Description: Secure Sockets Layer toolkit - shared libraries
+
+Package: zlib1g
+Status: install ok installed
+Priority: required
+Section: libs
+Installed-Size: 163
+Maintainer: Ubuntu Developers
+Architecture: amd64
+Multi-Arch: same
+Version: 1:1.2.11.dfsg-2ubuntu1.5
+Depends: libc6 (>= 2.4)
+Description: compression library - runtime
+
+Package: libcurl4
+Status: install ok installed
+Priority: optional
+Section: libs
+Installed-Size: 744
+Maintainer: Ubuntu Developers
+Architecture: amd64
+Multi-Arch: same
+Source: curl
+Version: 7.68.0-1ubuntu2.18
+Depends: libc6 (>= 2.17), libnghttp2-14, libssl1.1, zlib1g
+Description: easy-to-use client-side URL transfer library

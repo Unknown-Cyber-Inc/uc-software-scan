@@ -22,7 +22,8 @@ const {
   detectEcosystems, 
   getEcosystem, 
   getAvailableEcosystems,
-  findEcosystemDirectory 
+  findEcosystemDirectory,
+  findEcosystemScanDirectories
 } = require('./ecosystems');
 
 // File reputation module for checking existing files
@@ -177,7 +178,19 @@ function checkMagicBytes(filePath) {
  */
 function isBinaryByExtension(filePath) {
   const ext = path.extname(filePath).toLowerCase();
-  return BINARY_EXTENSIONS.has(ext);
+  if (BINARY_EXTENSIONS.has(ext)) return true;
+  
+  // Check for versioned shared libraries (e.g., libssl.so.1.1, libcurl.so.4.6.0)
+  const filename = path.basename(filePath).toLowerCase();
+  if (/\.so\.\d/.test(filename)) return true;
+  
+  // Check for versioned DLLs (e.g., mylib.dll.1)
+  if (/\.dll\.\d/.test(filename)) return true;
+  
+  // Check for versioned dylibs (e.g., libssl.1.0.dylib)
+  if (/\.\d+\.dylib$/.test(filename)) return true;
+  
+  return false;
 }
 
 /**
@@ -255,7 +268,17 @@ function scanDirectory(dir, rootDir, results, ecosystem, visited = new Set()) {
         
         // Check for binary by extension first (faster)
         if (isBinaryByExtension(fullPath)) {
-          detectedType = path.extname(fullPath).toLowerCase().slice(1).toUpperCase();
+          // Handle versioned shared libraries (e.g., libssl.so.1.1 -> SO)
+          const filename = path.basename(fullPath).toLowerCase();
+          if (/\.so\.\d/.test(filename)) {
+            detectedType = 'SO';
+          } else if (/\.dll\.\d/.test(filename)) {
+            detectedType = 'DLL';
+          } else if (/\.\d+\.dylib$/.test(filename)) {
+            detectedType = 'DYLIB';
+          } else {
+            detectedType = path.extname(fullPath).toLowerCase().slice(1).toUpperCase();
+          }
         } 
         // Check for executable scripts
         else if (isScriptByExtension(fullPath)) {
@@ -984,24 +1007,34 @@ async function scanPackages(targetDir, options = {}) {
   
   // Scan each ecosystem
   for (const ecosystem of ecosystemsToScan) {
-    const pkgDir = findEcosystemDirectory(targetDir, ecosystem.name);
+    // For Linux package managers (dpkg, apk, rpm), scan multiple library directories
+    // For other ecosystems, scan the single package directory
+    const scanDirs = findEcosystemScanDirectories(targetDir, ecosystem.name);
     
-    if (!pkgDir) {
-      console.log(`\nSkipping ${ecosystem.displayName}: directory not found`);
-      continue;
+    if (scanDirs.length === 0) {
+      // Fallback to detection directory
+      const detectionDir = findEcosystemDirectory(targetDir, ecosystem.name);
+      if (!detectionDir) {
+        console.log(`\nSkipping ${ecosystem.displayName}: directory not found`);
+        continue;
+      }
+      scanDirs.push(detectionDir);
     }
     
     console.log(`\n${'='.repeat(80)}`);
     console.log(`SCANNING ${ecosystem.displayName.toUpperCase()}`);
     console.log('='.repeat(80));
-    console.log(`Directory: ${pkgDir}`);
+    console.log(`Directories: ${scanDirs.map(d => path.relative(targetDir, d) || '.').join(', ')}`);
     console.log(`Deep magic byte scan: ${deepMagicScan ? 'enabled' : 'disabled (use --deep for thorough scan)'}\n`);
     
     const results = [];
     scannedDirs = 0;
     scannedFiles = 0;
     
-    scanDirectory(pkgDir, pkgDir, results, ecosystem);
+    // Scan all relevant directories for this ecosystem
+    for (const scanDir of scanDirs) {
+      scanDirectory(scanDir, targetDir, results, ecosystem);
+    }
     
     // Clear progress line
     process.stdout.write('\r' + ' '.repeat(80) + '\r');
