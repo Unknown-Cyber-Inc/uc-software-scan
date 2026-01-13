@@ -286,7 +286,6 @@ runs:
             --path node_modules \
             --output license-results.json \
             --github-annotations \
-            --github-summary \
             $POLICY_ARG || true
         fi
         

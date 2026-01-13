@@ -16,104 +16,111 @@ function makeLink(file, sha256) {
   return file;
 }
 
-function generateBinarySummary(results) {
+function generateHeader() {
+  return '# 🛡️ UC Software Scan Report\n\n';
+}
+
+function generateScanMetrics(results) {
   let output = '';
   
-  // Header
-  output += '## 🔍 Software Package Scan Results\n\n';
+  output += '## 📊 Scan Metrics\n\n';
   
   // Packages scanned
-  output += '### 📦 Packages Scanned\n';
   output += '| Metric | Count |\n';
   output += '|--------|-------|\n';
-  output += `| Packages with binaries | ${results.totalPackages || 0} |\n`;
+  output += `| Packages scanned | ${results.totalPackages || 0} |\n`;
   output += `| Binary files found | ${results.totalBinaries || 0} |\n`;
-  output += '\n';
   
   // Upload results
   if (results.uploadResults) {
     const ur = results.uploadResults;
-    output += '### ☁️ Upload Results\n';
-    output += '| Status | Count |\n';
-    output += '|--------|-------|\n';
     output += `| ✅ Uploaded | ${ur.successful?.length || 0} |\n`;
     output += `| ⏭️ Skipped (existing) | ${ur.skipped?.length || 0} |\n`;
     output += `| ❌ Failed | ${ur.failed?.length || 0} |\n`;
-    output += '\n';
-    
-    // Security findings
-    const reps = ur.reputations || [];
-    const high = reps.filter(r => r.reputation?.overallThreatLevel === 'high');
-    const medium = reps.filter(r => r.reputation?.overallThreatLevel === 'medium');
-    const caution = reps.filter(r => r.reputation?.overallThreatLevel === 'caution');
-    
-    if (high.length > 0 || medium.length > 0 || caution.length > 0) {
-      output += '### 🛡️ Security Findings\n\n';
-      
-      if (high.length > 0) {
-        output += '#### 🔴 High Severity\n';
-        output += '| File | Issue |\n|------|-------|\n';
-        high.forEach(r => {
-          const issues = [];
-          if (r.reputation?.av?.threatLevel === 'high') {
-            issues.push(`AV: ${r.reputation.av.detected}/${r.reputation.av.total}`);
-          }
-          if (r.reputation?.similarity?.threatLevel === 'high') {
-            issues.push(`Similarity: ${r.reputation.similarity.score}`);
-          }
-          output += `| ${makeLink(r.file, r.sha256)} | ${issues.join(', ')} |\n`;
-        });
-        output += '\n';
-      }
-      
-      if (medium.length > 0) {
-        output += '#### 🟠 Medium Severity\n';
-        output += '| File | Issue |\n|------|-------|\n';
-        medium.forEach(r => {
-          const issues = [];
-          if (r.reputation?.av?.threatLevel === 'medium') {
-            issues.push(`AV: ${r.reputation.av.detected}/${r.reputation.av.total}`);
-          }
-          if (r.reputation?.similarity?.threatLevel === 'medium') {
-            issues.push(`Similarity: ${r.reputation.similarity.score}`);
-          }
-          output += `| ${makeLink(r.file, r.sha256)} | ${issues.join(', ')} |\n`;
-        });
-        output += '\n';
-      }
-      
-      if (caution.length > 0) {
-        output += '#### 🟡 Caution\n';
-        output += '| File | Issue |\n|------|-------|\n';
-        caution.forEach(r => {
-          const issues = [];
-          if (r.reputation?.signature?.threatLevel === 'caution') {
-            issues.push('Unsigned binary');
-          }
-          if (r.reputation?.av?.threatLevel === 'caution') {
-            issues.push(`AV: ${r.reputation.av.detected}/${r.reputation.av.total}`);
-          }
-          output += `| ${makeLink(r.file, r.sha256)} | ${issues.join(', ')} |\n`;
-        });
-        output += '\n';
-      }
-    } else if (reps.length > 0) {
-      output += '### 🛡️ Security Findings\n\n';
-      output += '✅ No security issues detected\n\n';
-    }
   }
   
+  output += '\n';
   return output;
 }
 
-function generateYaraSummary(yaraResults) {
+function generateMalwareReport(results) {
   let output = '';
   
-  if (!yaraResults.results || yaraResults.results.length === 0) {
+  output += '## 🦠 Malware Report\n\n';
+  
+  if (!results.uploadResults?.reputations) {
+    output += '✅ No violations found\n\n';
     return output;
   }
   
-  output += '### 🔎 YARA Matches\n';
+  const reps = results.uploadResults.reputations;
+  const malwareFindings = reps.filter(r => {
+    const av = r.reputation?.av;
+    return av && (av.threatLevel === 'high' || av.threatLevel === 'medium');
+  });
+  
+  if (malwareFindings.length === 0) {
+    output += '✅ No violations found\n\n';
+    return output;
+  }
+  
+  output += '| File | AV Detection | Threat Level |\n';
+  output += '|------|--------------|-------------|\n';
+  
+  malwareFindings.forEach(r => {
+    const av = r.reputation.av;
+    const icon = av.threatLevel === 'high' ? '🔴' : '🟠';
+    output += `| ${makeLink(r.file, r.sha256)} | ${av.detected}/${av.total} | ${icon} ${av.threatLevel} |\n`;
+  });
+  
+  output += '\n';
+  return output;
+}
+
+function generateGenomicsReport(results) {
+  let output = '';
+  
+  output += '## 🧬 Genomics Report\n\n';
+  
+  if (!results.uploadResults?.reputations) {
+    output += '✅ No violations found\n\n';
+    return output;
+  }
+  
+  const reps = results.uploadResults.reputations;
+  const similarityFindings = reps.filter(r => {
+    const sim = r.reputation?.similarity;
+    return sim && (sim.threatLevel === 'high' || sim.threatLevel === 'medium');
+  });
+  
+  if (similarityFindings.length === 0) {
+    output += '✅ No violations found\n\n';
+    return output;
+  }
+  
+  output += '| File | Similarity Score | Threat Level |\n';
+  output += '|------|-----------------|-------------|\n';
+  
+  similarityFindings.forEach(r => {
+    const sim = r.reputation.similarity;
+    const icon = sim.threatLevel === 'high' ? '🔴' : '🟠';
+    output += `| ${makeLink(r.file, r.sha256)} | ${sim.score} | ${icon} ${sim.threatLevel} |\n`;
+  });
+  
+  output += '\n';
+  return output;
+}
+
+function generateYaraReport(yaraResults) {
+  let output = '';
+  
+  output += '## 🔎 YARA Scan Report\n\n';
+  
+  if (!yaraResults?.results || yaraResults.results.length === 0) {
+    output += '✅ No violations found\n\n';
+    return output;
+  }
+  
   output += '| File | Rule | Severity |\n';
   output += '|------|------|----------|\n';
   
@@ -132,15 +139,21 @@ function generateYaraSummary(yaraResults) {
   return output;
 }
 
-function generateLicenseSummary(licenseResults) {
+function generateLicenseReport(licenseResults) {
   let output = '';
+  
+  output += '## 📜 License Compliance Report\n\n';
+  
+  if (!licenseResults) {
+    output += '✅ No violations found\n\n';
+    return output;
+  }
   
   const allowed = licenseResults.allowed?.length || 0;
   const warning = licenseResults.warning?.length || 0;
   const denied = licenseResults.denied?.length || 0;
   const unknown = licenseResults.unknown?.length || 0;
   
-  output += '### 📜 License Compliance\n';
   output += '| Status | Count |\n';
   output += '|--------|-------|\n';
   output += `| ✅ Allowed | ${allowed} |\n`;
@@ -149,8 +162,13 @@ function generateLicenseSummary(licenseResults) {
   output += `| ❓ Unknown | ${unknown} |\n`;
   output += '\n';
   
+  if (denied === 0 && warning === 0) {
+    output += '✅ No violations found\n\n';
+    return output;
+  }
+  
   if (denied > 0) {
-    output += '#### ❌ Denied Licenses\n';
+    output += '### ❌ Denied Licenses\n';
     output += '| Package | Version | License |\n';
     output += '|---------|---------|----------|\n';
     licenseResults.denied.forEach(pkg => {
@@ -159,16 +177,22 @@ function generateLicenseSummary(licenseResults) {
     output += '\n';
   }
   
-  if (warning > 0 && warning <= 10) {
-    output += '#### ⚠️ Licenses Needing Review\n';
+  if (warning > 0) {
+    output += '### ⚠️ Licenses Requiring Review\n';
     output += '| Package | Version | License |\n';
     output += '|---------|---------|----------|\n';
-    licenseResults.warning.forEach(pkg => {
-      output += `| ${pkg.name} | ${pkg.version} | ${pkg.license} |\n`;
-    });
+    if (warning <= 10) {
+      licenseResults.warning.forEach(pkg => {
+        output += `| ${pkg.name} | ${pkg.version} | ${pkg.license} |\n`;
+      });
+    } else {
+      // Show first 10 and note there are more
+      licenseResults.warning.slice(0, 10).forEach(pkg => {
+        output += `| ${pkg.name} | ${pkg.version} | ${pkg.license} |\n`;
+      });
+      output += `| ... | ... | *${warning - 10} more* |\n`;
+    }
     output += '\n';
-  } else if (warning > 10) {
-    output += `#### ⚠️ ${warning} packages need license review\n\n`;
   }
   
   return output;
@@ -183,38 +207,62 @@ function main() {
   
   let output = '';
   
-  // Binary scan results
+  // Main header
+  output += generateHeader();
+  
+  // Load results
+  let binaryResults = null;
+  let yaraResults = null;
+  let licenseResults = null;
+  
   const binaryResultsPath = 'binary-scan-results.json';
   if (fs.existsSync(binaryResultsPath)) {
     try {
-      const results = JSON.parse(fs.readFileSync(binaryResultsPath, 'utf8'));
-      output += generateBinarySummary(results);
+      binaryResults = JSON.parse(fs.readFileSync(binaryResultsPath, 'utf8'));
     } catch (e) {
       console.error('Error parsing binary-scan-results.json:', e.message);
     }
   }
   
-  // YARA results
   const yaraResultsPath = 'yara-results.json';
   if (fs.existsSync(yaraResultsPath)) {
     try {
-      const yaraResults = JSON.parse(fs.readFileSync(yaraResultsPath, 'utf8'));
-      output += generateYaraSummary(yaraResults);
+      yaraResults = JSON.parse(fs.readFileSync(yaraResultsPath, 'utf8'));
     } catch (e) {
       console.error('Error parsing yara-results.json:', e.message);
     }
   }
   
-  // License results
   const licenseResultsPath = 'license-results.json';
   if (fs.existsSync(licenseResultsPath)) {
     try {
-      const licenseResults = JSON.parse(fs.readFileSync(licenseResultsPath, 'utf8'));
-      output += generateLicenseSummary(licenseResults);
+      licenseResults = JSON.parse(fs.readFileSync(licenseResultsPath, 'utf8'));
     } catch (e) {
       console.error('Error parsing license-results.json:', e.message);
     }
   }
+  
+  // Generate sections in order:
+  // 1. Scan Metrics (with upload data)
+  if (binaryResults) {
+    output += generateScanMetrics(binaryResults);
+  }
+  
+  // 2. Malware Report
+  if (binaryResults) {
+    output += generateMalwareReport(binaryResults);
+  }
+  
+  // 3. Genomics Report
+  if (binaryResults) {
+    output += generateGenomicsReport(binaryResults);
+  }
+  
+  // 4. YARA Scan Report
+  output += generateYaraReport(yaraResults);
+  
+  // 5. License Compliance Report
+  output += generateLicenseReport(licenseResults);
   
   // Output
   if (summaryPath) {
