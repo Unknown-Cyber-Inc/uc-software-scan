@@ -1,5 +1,5 @@
 name: 'Package Binary Scanner'
-description: 'Scans package directories for binary executables and optionally uploads them to UnknownCyber for analysis. Auto-detects npm, pip, maven, cargo, go, and ruby ecosystems from installed packages.'
+description: 'Scans software packages for security threats including binaries, scripts, and malware. Auto-detects npm, pip, maven, cargo, go, ruby, nuget, dpkg, apk, and rpm ecosystems.'
 author: 'UnknownCyber'
 
 branding:

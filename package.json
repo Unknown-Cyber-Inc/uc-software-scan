@@ -1,7 +1,7 @@
 {
   "name": "uc-software-scan",
   "version": "1.0.0",
-  "description": "Scans npm packages for binary executables (DLL, EXE, ELF, SO, etc.)",
+  "description": "Scans software packages for binary executables and security threats. Supports npm, pip, Maven, Cargo, Go, Ruby, NuGet, and Linux package managers.",
   "main": "scanner.js",
   "bin": {
     "uc-software-scan": "./scanner.js"

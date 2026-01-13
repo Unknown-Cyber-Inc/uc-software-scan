@@ -1,4 +1,4 @@
-# Example workflow: Scheduled weekly scan of npm binaries
+# Example workflow: Scheduled weekly security scan
 # Copy this file to your repo's .github/workflows/ directory
 
 name: Weekly Binary Scan
@@ -28,7 +28,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Scan npm binaries (deep scan)
+      - name: Scan packages (deep scan)
         id: scan
         uses: Unknown-Cyber-Inc/uc-software-scan@v1
         with:

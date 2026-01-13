@@ -1,7 +1,7 @@
-# Example workflow: Scan npm binaries on every push
+# Example workflow: Scan software packages on every push
 # Copy this file to your repo's .github/workflows/ directory
 
-name: Scan NPM Binaries
+name: Security Scan
 
 on:
   push:
@@ -39,7 +39,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Scan npm binaries
+      - name: Scan packages
         id: scan
         uses: Unknown-Cyber-Inc/uc-software-scan@v1
         with:

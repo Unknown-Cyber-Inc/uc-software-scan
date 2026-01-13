@@ -20,7 +20,7 @@ function generateBinarySummary(results) {
   let output = '';
   
   // Header
-  output += '## 🔍 NPM Package Scan Results\n\n';
+  output += '## 🔍 Software Package Scan Results\n\n';
   
   // Packages scanned
   output += '### 📦 Packages Scanned\n';

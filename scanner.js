@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 /**
- * Multi-Ecosystem Package Scanner
+ * UC Software Scan - Multi-Ecosystem Package Scanner
  * 
- * Scans package directories for binary executables and scripts.
- * Supports multiple package ecosystems: npm, pip, maven, cargo, go, ruby.
+ * Scans software packages for binary executables, scripts, and security threats.
+ * Supports: npm, pip, maven, cargo, go, ruby, nuget, dpkg, apk, rpm.
  * Reports the package name, version, and file paths for each binary found.
- * Optionally uploads found binaries to UnknownCyber API.
+ * Optionally uploads found binaries to UnknownCyber API for threat analysis.
  */
 
 const fs = require('fs');

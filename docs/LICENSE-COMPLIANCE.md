@@ -211,7 +211,7 @@ The AGPL extends GPL to network/SaaS use. If you use AGPL code in a web service,
 ### GitHub Action
 
 ```yaml
-- name: Scan npm packages
+- name: Scan packages
   uses: Unknown-Cyber-Inc/uc-software-scan@v1
   with:
     license-check: 'true'

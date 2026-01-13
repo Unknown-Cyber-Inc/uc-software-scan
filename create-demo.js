@@ -131,7 +131,7 @@ function generatePackageJson(release, repoName) {
     },
     dependencies: release.packages,
     devDependencies: {},
-    keywords: ['demo', 'npm-scanner', 'security'],
+    keywords: ['demo', 'uc-software-scan', 'security'],
     author: 'UnknownCyber',
     license: 'MIT'
   };
@@ -167,7 +167,7 @@ function generateIndexJs() {
 const _ = require('lodash');
 
 function main() {
-  console.log('NPM Scanner Demo');
+  console.log('UC Software Scan Demo');
   console.log('Dependencies loaded successfully');
   
   const data = [1, 2, 3, 4, 5];
@@ -238,7 +238,7 @@ jobs:
 async function main() {
   const { targetDir, repoName, githubOrg } = CONFIG;
   
-  console.log('NPM Scanner Demo Generator');
+  console.log('UC Software Scan Demo Generator');
   console.log('==========================\n');
   console.log(`Target directory: ${targetDir}`);
   console.log(`Repository name: ${repoName}`);

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * License Compliance Checker for npm packages
+ * License Compliance Checker for software packages
  * Scans node_modules and checks licenses against a configurable policy
  */
 

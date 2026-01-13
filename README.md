@@ -1,8 +1,8 @@
-# Package Binary Scanner
+# UC Software Scan
 
 [![Test Action](https://github.com/Unknown-Cyber-Inc/uc-software-scan/actions/workflows/test.yml/badge.svg)](https://github.com/Unknown-Cyber-Inc/uc-software-scan/actions/workflows/test.yml)
 
-A GitHub Action and CLI tool that scans package directories for security threats. It **auto-detects** installed packages from multiple ecosystems (npm, pip, Maven, Cargo, Go, Ruby), finds binary executables and scripts, then uploads them to UnknownCyber for multi-layer threat analysis including AV scanning, genomic similarity, and SBOM tracking.
+A GitHub Action and CLI tool that scans software packages for security threats. It **auto-detects** installed packages from multiple ecosystems (npm, pip, Maven, Cargo, Go, Ruby, NuGet, dpkg, apk, rpm), finds binary executables and scripts, then uploads them to UnknownCyber for multi-layer threat analysis including AV scanning, genomic similarity, and SBOM tracking.
 
 ## Supported Ecosystems
 
@@ -14,6 +14,10 @@ A GitHub Action and CLI tool that scans package directories for security threats
 | **Cargo** | `target/release/` | `Cargo.toml` | `SW_cargo/pkg_version` |
 | **Go** | `vendor/`, `pkg/mod/` | `go.mod` | `SW_go/module_version` |
 | **Ruby** | `vendor/bundle/` | `*.gemspec` | `SW_ruby/gem_version` |
+| **NuGet** | `packages/` | `*.nuspec` | `SW_nuget/pkg_version` |
+| **dpkg** | `/usr/lib/` | `/var/lib/dpkg/status` | `SW_dpkg/pkg_version` |
+| **apk** | `/usr/lib/`, `/lib/` | `/lib/apk/db/installed` | `SW_apk/pkg_version` |
+| **rpm** | `/usr/lib64/` | `/var/lib/rpm/` | `SW_rpm/pkg_version` |
 
 The scanner **automatically detects** which ecosystems are present after your build/install step—no configuration required.
 
@@ -320,7 +324,7 @@ Note: Reputation data is only fetched for executable files (binaries and scripts
 The simplest way to get full security scanning with a detailed report:
 
 ```yaml
-- name: Scan npm packages
+- name: Scan packages
   uses: Unknown-Cyber-Inc/uc-software-scan@v1
   with:
     upload: 'true'
