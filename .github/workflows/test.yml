@@ -509,6 +509,7 @@ jobs:
           ecosystem: npm
           package-name: malicious-package
           samples: obfuscated-js,elf-malware
+          target-path: test-project
 
       - name: Check injection results
         id: check-injection
@@ -523,7 +524,8 @@ jobs:
             echo "samples-available=false" >> $GITHUB_OUTPUT
           else
             echo "samples-available=true" >> $GITHUB_OUTPUT
-            ls -la test-project/node_modules/malicious-package/ || true
+            # Verify files exist at the injected path
+            ls -la "${{ steps.inject.outputs.injected-path }}/" || true
           fi
 
       - name: Run Scanner with YARA and upload
