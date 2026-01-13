@@ -811,30 +811,43 @@ The script generates a repository with **6 versioned releases** (v1.0.0 through 
 - **Pipeline blocking**: Fails on high-severity detections
 - **Malware detection**: Optionally downloads real malware samples (Shai Hulud) to demonstrate YARA detection
 
-### Malware Demo
-
-To demonstrate catching real malware, push a commit with "infected" in the message:
-
-```bash
-git commit --allow-empty -m "Test infected package detection"
-git push
-```
-
-This triggers download of known malware samples to a fake `lodash_infected` package, which the YARA scanner will detect and block.
-
 ## Malware Test Injection
 
 A reusable composite action is included for injecting **real malware samples** into any ecosystem for security testing. This validates that your scanning setup correctly detects threats.
 
+> ⚠️ **Important**: Create a **separate, manual-only workflow** for malware testing. Do not trigger malware injection on regular pushes or via commit messages—this could accidentally fail your normal CI/CD pipeline.
+
 ### Quick Start
 
+Create a separate workflow file (e.g., `.github/workflows/malware-test.yml`):
+
 ```yaml
-- uses: Unknown-Cyber-Inc/uc-software-scan/malware-test-inject@main
-  with:
-    api-key: ${{ secrets.UC_API_KEY }}
-    ecosystem: npm
-    package-name: fake-malware-package
+name: Malware Detection Test
+
+on:
+  workflow_dispatch:  # Manual trigger only
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm install
+      
+      - uses: Unknown-Cyber-Inc/uc-software-scan/malware-test-inject@main
+        with:
+          api-key: ${{ secrets.UC_API_KEY }}
+          ecosystem: npm
+          package-name: test-malware-package
+      
+      - uses: Unknown-Cyber-Inc/uc-software-scan@main
+        with:
+          yara-scan: 'true'
+          fail-on-threats: 'false'
+          api-key: ${{ secrets.UC_API_KEY }}
 ```
+
+Then trigger manually from GitHub Actions → "Malware Detection Test" → "Run workflow".
 
 ### Supported Ecosystems
 
@@ -857,24 +870,6 @@ A reusable composite action is included for injecting **real malware samples** i
 | `elf-malware` | Neotyxa Linux ELF malware binary | 52+ AV engines |
 | `pe-malware` | Windows PE malware executable | 38+ AV engines |
 | `all` | Download all available samples | - |
-
-### Conditional Injection
-
-Inject only when explicitly requested:
-
-```yaml
-# Via workflow dispatch checkbox
-- uses: Unknown-Cyber-Inc/uc-software-scan/malware-test-inject@main
-  if: ${{ inputs.inject-malware }}
-  with:
-    api-key: ${{ secrets.UC_API_KEY }}
-
-# Via commit message
-- uses: Unknown-Cyber-Inc/uc-software-scan/malware-test-inject@main
-  if: contains(github.event.head_commit.message, 'infected')
-  with:
-    api-key: ${{ secrets.UC_API_KEY }}
-```
 
 ### Complete Testing Workflow
 
